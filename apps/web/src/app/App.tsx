@@ -859,8 +859,8 @@ const NotebookTreeItem = ({
           "group flex h-9 items-center gap-1 rounded-md px-2 text-sm transition",
           selected ? "border border-emerald-200 bg-emerald-100 text-emerald-950" : "text-slate-700 hover:bg-emerald-50",
           dropPosition === "inside" && "ring-2 ring-emerald-300",
-          dropPosition === "before" && "shadow-[inset_0_2px_0_0_#34d399]",
-          dropPosition === "after" && "shadow-[inset_0_-2px_0_0_#34d399]"
+          dropPosition === "before" && "shadow-[inset_0_2px_0_0_#627f58]",
+          dropPosition === "after" && "shadow-[inset_0_-2px_0_0_#627f58]"
         )}
         draggable
         onDragStart={(event) => {

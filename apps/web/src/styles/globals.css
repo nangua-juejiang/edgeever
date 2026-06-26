@@ -20,8 +20,8 @@ body,
 body {
   margin: 0;
   background:
-    linear-gradient(180deg, rgba(240, 253, 244, 0.98), rgba(236, 253, 245, 0.98)),
-    #f0fdf4;
+    linear-gradient(180deg, rgba(247, 248, 244, 0.98), rgba(239, 243, 235, 0.98)),
+    #f6f7f3;
   color: #0f172a;
   overscroll-behavior: none;
 }
@@ -81,29 +81,29 @@ textarea {
 
 .ProseMirror blockquote {
   margin: 0 0 1rem;
-  border-left: 3px solid #34d399;
+  border-left: 3px solid #627f58;
   padding: 0.1rem 0 0.1rem 1rem;
   color: #475569;
-  background: #ecfdf5;
+  background: #f4f6f1;
 }
 
 .ProseMirror code {
-  border: 1px solid #d1fae5;
+  border: 1px solid #cdd9c5;
   border-radius: 5px;
-  background: #ecfdf5;
+  background: #f4f6f1;
   padding: 0.08rem 0.28rem;
   font-size: 0.9em;
-  color: #064e3b;
+  color: #293b2b;
 }
 
 .ProseMirror pre {
   margin: 0 0 1rem;
   overflow-x: auto;
-  border: 1px solid #d1fae5;
+  border: 1px solid #cdd9c5;
   border-radius: 8px;
-  background: #0f172a;
+  background: #13231a;
   padding: 0.9rem 1rem;
-  color: #ecfdf5;
+  color: #edf3e9;
 }
 
 .ProseMirror pre code {
@@ -116,7 +116,7 @@ textarea {
 .ProseMirror hr {
   margin: 1.5rem 0;
   border: 0;
-  border-top: 1px solid #a7f3d0;
+  border-top: 1px solid #a9bea0;
 }
 
 .ProseMirror img {
@@ -124,12 +124,12 @@ textarea {
   max-width: 100%;
   height: auto;
   margin: 1rem 0;
-  border: 1px solid #d1fae5;
+  border: 1px solid #cdd9c5;
   border-radius: 8px;
 }
 
 .ProseMirror img.ProseMirror-selectednode {
-  outline: 2px solid #34d399;
+  outline: 2px solid #627f58;
   outline-offset: 3px;
 }
 

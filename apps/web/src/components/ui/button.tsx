@@ -10,8 +10,8 @@ type ButtonProps = ButtonHTMLAttributes<HTMLButtonElement> & {
 };
 
 const variantClassName: Record<ButtonVariant, string> = {
-  solid: "bg-emerald-100 text-emerald-950 hover:bg-emerald-200 border-emerald-200",
-  soft: "bg-emerald-50 text-emerald-950 hover:bg-emerald-100 border-emerald-100",
+  solid: "bg-emerald-700 text-white hover:bg-emerald-800 border-emerald-700",
+  soft: "bg-emerald-50 text-emerald-950 hover:bg-emerald-100 border-emerald-200",
   ghost: "bg-transparent text-emerald-800 hover:bg-emerald-50 hover:text-emerald-950 border-transparent",
   outline: "bg-white text-emerald-900 hover:bg-emerald-50 border-emerald-200",
   danger: "bg-rose-50 text-rose-700 hover:bg-rose-100 border-rose-100",
