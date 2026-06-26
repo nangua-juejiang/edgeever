@@ -1,8 +1,11 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import React from "react";
 import { createRoot } from "react-dom/client";
+import { registerSW } from "virtual:pwa-register";
 import { App } from "./app/App";
 import "./styles/globals.css";
+
+registerSW({ immediate: true });
 
 const queryClient = new QueryClient({
   defaultOptions: {
