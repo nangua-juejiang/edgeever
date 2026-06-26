@@ -117,65 +117,38 @@ https://你的域名/api/openapi.json
 
 ## MCP
 
-先在 EdgeEver 左侧 **设置** 里创建 API Token。给只读 Agent 使用时建议只勾选 `read:notebooks`、`read:memos`、`read:tags`；需要写入、移动、合并或上传附件时再增加对应 `write:*` scope。
+先在 EdgeEver 左侧 **设置** 里创建 API Token，然后按客户端支持的方式接入。
 
-MCP endpoint：
+Remote MCP / Streamable HTTP：
 
 ```text
 https://你的域名/mcp
 Authorization: Bearer <api-token>
 ```
 
-当前 MCP 使用 Streamable HTTP / JSON-RPC 入口，支持 `initialize`、`tools/list`、`tools/call` 和 batch request。已暴露的 tools：
+stdio MCP 示例：
 
-```text
-search_memos
-get_memo
-create_memo
-update_memo
-move_memos
-merge_memos
-move_notebook
-list_notebooks
-list_tags
-```
-
-本地 stdio MCP 客户端可通过 bridge 连接远程 EdgeEver：
-
-```sh
-EDGEEVER_URL=https://你的域名 \
-EDGEEVER_TOKEN=<api-token> \
-bun run mcp:stdio
-```
-
-也可以复用 CLI profile：
-
-```sh
-bun run cli -- profile set prod --url https://你的域名 --token <api-token>
-bun run mcp:stdio -- --profile prod
-```
-
-Claude Desktop / Cursor / Codex 这类本地客户端可把 command 配成 `bun`，args 配成仓库内 `scripts/edgeever-mcp-stdio.mjs` 的绝对路径，并通过环境变量传入 `EDGEEVER_URL` 和 `EDGEEVER_TOKEN`。
-
-最小调用示例：
-
-```sh
-curl https://你的域名/mcp \
-  -H "Authorization: Bearer <api-token>" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "jsonrpc": "2.0",
-    "id": 1,
-    "method": "tools/call",
-    "params": {
-      "name": "search_memos",
-      "arguments": {
-        "query": "edgeever",
-        "limit": 10
+```json
+{
+  "mcpServers": {
+    "edgeever": {
+      "command": "bun",
+      "args": ["/你的/edgeever/绝对路径/scripts/edgeever-mcp-stdio.mjs"],
+      "env": {
+        "EDGEEVER_URL": "https://你的域名",
+        "EDGEEVER_TOKEN": "<api-token>"
       }
     }
-  }'
+  }
+}
 ```
+
+说明：
+
+- `command` 需要本机已安装 Bun。
+- `args` 改成你本机 EdgeEver 仓库里的绝对路径。
+- `EDGEEVER_TOKEN` 来自 EdgeEver 左侧 **设置**。
+- 只读 Agent 建议 scopes：`read:notebooks`、`read:memos`、`read:tags`；需要写入再加 `write:memos`。
 
 ## 开发者工具
 
