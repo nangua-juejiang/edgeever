@@ -1,4 +1,12 @@
-import type { AuthSession, AuthUser, MemoDetail, MemoSummary, Notebook, TiptapDoc } from "@edgeever/shared";
+import {
+  docToMarkdown,
+  type AuthSession,
+  type AuthUser,
+  type MemoDetail,
+  type MemoSummary,
+  type Notebook,
+  type TiptapDoc,
+} from "@edgeever/shared";
 import Image from "@tiptap/extension-image";
 import Placeholder from "@tiptap/extension-placeholder";
 import { EditorContent, useEditor, type Editor } from "@tiptap/react";
@@ -14,6 +22,7 @@ import {
   FilePlus2,
   Folder,
   HardDrive,
+  History,
   ImageIcon,
   Inbox,
   LayoutList,
@@ -1027,6 +1036,161 @@ const formatBytes = (bytes: number) => {
   return `${exponent === 0 ? value.toFixed(0) : value.toFixed(value >= 10 ? 1 : 2)} ${units[exponent]}`;
 };
 
+const RevisionHistoryDialog = ({
+  memo,
+  currentMarkdown,
+  onClose,
+  onRestored,
+}: {
+  memo: MemoDetail;
+  currentMarkdown: string;
+  onClose: () => void;
+  onRestored: (memo: MemoDetail) => Promise<void>;
+}) => {
+  const [selectedRevisionId, setSelectedRevisionId] = useState<string | null>(null);
+  const revisionsQuery = useQuery({
+    queryKey: ["memo-revisions", memo.id],
+    queryFn: () => api.listMemoRevisions(memo.id),
+  });
+  const revisions = revisionsQuery.data?.revisions ?? [];
+  const selectedRevision =
+    revisions.find((revision) => revision.id === selectedRevisionId) ?? revisions[0] ?? null;
+  const diffSummary = useMemo(
+    () => summarizeMarkdownDiff(selectedRevision?.contentMarkdown ?? "", currentMarkdown),
+    [currentMarkdown, selectedRevision?.contentMarkdown]
+  );
+  const restoreMutation = useMutation({
+    mutationFn: (revisionId: string) => api.restoreMemoRevision(memo.id, revisionId),
+    onSuccess: async (data) => {
+      await onRestored(data.memo);
+    },
+  });
+
+  useEffect(() => {
+    if (!selectedRevisionId && revisions.length > 0) {
+      setSelectedRevisionId(revisions[0].id);
+    }
+  }, [revisions, selectedRevisionId]);
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-end bg-slate-950/35 p-0 sm:items-center sm:justify-center sm:p-6">
+      <section className="flex max-h-[88dvh] w-full flex-col rounded-t-md bg-white shadow-panel sm:max-w-[980px] sm:rounded-md">
+        <header className="flex shrink-0 items-center justify-between gap-3 border-b border-emerald-100 px-4 py-3 sm:px-5">
+          <div className="min-w-0">
+            <div className="flex items-center gap-2 text-base font-semibold text-slate-950">
+              <History className="h-4 w-4 text-emerald-700" />
+              版本历史
+            </div>
+            <div className="mt-1 truncate text-xs text-slate-500">{memo.title || "Untitled memo"}</div>
+          </div>
+          <Button size="icon" variant="ghost" title="关闭" onClick={onClose}>
+            <X className="h-4 w-4" />
+          </Button>
+        </header>
+
+        <div className="grid min-h-0 flex-1 grid-rows-[auto_minmax(0,1fr)] sm:grid-cols-[280px_minmax(0,1fr)] sm:grid-rows-1">
+          <aside className="min-h-0 border-b border-emerald-100 p-3 sm:border-b-0 sm:border-r">
+            {revisionsQuery.isLoading ? (
+              <div className="px-2 py-8 text-center text-sm text-slate-500">加载中</div>
+            ) : revisions.length === 0 ? (
+              <div className="rounded-md border border-dashed border-slate-300 px-4 py-8 text-center text-sm text-slate-500">
+                暂无历史版本
+              </div>
+            ) : (
+              <div className="max-h-44 space-y-2 overflow-y-auto sm:max-h-none">
+                {revisions.map((revision) => (
+                  <button
+                    key={revision.id}
+                    className={cn(
+                      "block w-full rounded-md border px-3 py-2 text-left transition",
+                      selectedRevision?.id === revision.id
+                        ? "border-emerald-300 bg-emerald-50"
+                        : "border-emerald-100 hover:border-emerald-200 hover:bg-emerald-50/50"
+                    )}
+                    onClick={() => setSelectedRevisionId(revision.id)}
+                  >
+                    <span className="block text-sm font-semibold text-slate-950">
+                      Revision {revision.revision}
+                    </span>
+                    <span className="mt-1 block truncate text-xs text-slate-500">
+                      {formatDateTime(revision.createdAt)}
+                    </span>
+                    <span className="mt-1 block truncate text-xs text-slate-400">
+                      {formatRevisionActor(revision.createdBy)}
+                    </span>
+                  </button>
+                ))}
+              </div>
+            )}
+          </aside>
+
+          <div className="flex min-h-0 flex-col">
+            <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-b border-emerald-100 px-4 py-3">
+              <div className="text-xs font-medium text-slate-500">
+                {selectedRevision ? `${diffSummary.changed} changed lines` : "No revision selected"}
+              </div>
+              <Button
+                size="sm"
+                variant="solid"
+                disabled={!selectedRevision || memo.isDeleted || restoreMutation.isPending}
+                onClick={() => {
+                  if (selectedRevision && window.confirm("恢复到这个历史版本？")) {
+                    restoreMutation.mutate(selectedRevision.id);
+                  }
+                }}
+              >
+                <RotateCcw className="h-4 w-4" />
+                恢复该版本
+              </Button>
+            </div>
+
+            <div className="grid min-h-0 flex-1 gap-0 overflow-y-auto sm:grid-cols-2">
+              <RevisionPreview title="历史版本" markdown={selectedRevision?.contentMarkdown ?? ""} />
+              <RevisionPreview title="当前内容" markdown={currentMarkdown} />
+            </div>
+          </div>
+        </div>
+      </section>
+    </div>
+  );
+};
+
+const RevisionPreview = ({ title, markdown }: { title: string; markdown: string }) => (
+  <div className="min-h-[260px] border-b border-emerald-100 p-4 sm:border-b-0 sm:border-r">
+    <div className="mb-3 text-xs font-semibold uppercase text-slate-500">{title}</div>
+    <pre className="max-h-[54dvh] overflow-auto whitespace-pre-wrap break-words rounded-md border border-emerald-100 bg-emerald-50/30 p-3 text-sm leading-6 text-slate-700">
+      {markdown || "Empty memo"}
+    </pre>
+  </div>
+);
+
+const summarizeMarkdownDiff = (left: string, right: string) => {
+  const leftLines = left.split("\n");
+  const rightLines = right.split("\n");
+  const maxLines = Math.max(leftLines.length, rightLines.length);
+  let changed = 0;
+
+  for (let index = 0; index < maxLines; index += 1) {
+    if ((leftLines[index] ?? "") !== (rightLines[index] ?? "")) {
+      changed += 1;
+    }
+  }
+
+  return { changed };
+};
+
+const formatRevisionActor = (actor: string) => {
+  if (actor.startsWith("user:")) {
+    return "user";
+  }
+
+  if (actor.startsWith("agent:")) {
+    return "agent";
+  }
+
+  return actor || "system";
+};
+
 const EditorPane = ({
   memo,
   isTrashView,
@@ -1057,6 +1221,7 @@ const EditorPane = ({
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
   const [dirtyVersion, setDirtyVersion] = useState(0);
   const [imageUploadState, setImageUploadState] = useState<"idle" | "compressing" | "uploading" | "error">("idle");
+  const [historyOpen, setHistoryOpen] = useState(false);
   const memoRef = useRef<MemoDetail | null>(memo);
   const editorRef = useRef<Editor | null>(null);
   const hydratingRef = useRef(false);
@@ -1419,6 +1584,9 @@ const EditorPane = ({
                     : "图片上传中"}
               </span>
             ) : null}
+            <Button size="sm" variant="ghost" title="版本历史" onClick={() => setHistoryOpen(true)}>
+              <History className="h-4 w-4" />
+            </Button>
             {readOnly ? (
               <>
                 <Button size="sm" variant="solid" title="恢复笔记" onClick={() => void onRestored(memo.id)}>
@@ -1489,6 +1657,20 @@ const EditorPane = ({
       <div className="edgeever-editor min-h-0 flex-1 overflow-y-auto">
         <EditorContent editor={editor} />
       </div>
+      {historyOpen ? (
+        <RevisionHistoryDialog
+          currentMarkdown={editor ? docToMarkdown(editor.getJSON() as TiptapDoc) : memo.contentMarkdown}
+          memo={memo}
+          onClose={() => setHistoryOpen(false)}
+          onRestored={async (restoredMemo) => {
+            await localDb.drafts.delete(restoredMemo.id);
+            hasUnsavedChangesRef.current = false;
+            setHasUnsavedChanges(false);
+            await onSaved(restoredMemo);
+            setHistoryOpen(false);
+          }}
+        />
+      ) : null}
     </div>
   );
 };

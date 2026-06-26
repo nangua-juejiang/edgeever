@@ -1,6 +1,7 @@
 import type {
   AuthSession,
   MemoDetail,
+  MemoRevision,
   MemoSummary,
   Notebook,
   Resource,
@@ -15,6 +16,10 @@ type ListNotebooksResponse = {
 
 type ListMemosResponse = {
   memos: MemoSummary[];
+};
+
+type ListMemoRevisionsResponse = {
+  revisions: MemoRevision[];
 };
 
 type ListResourcesResponse = {
@@ -134,6 +139,15 @@ export const api = {
     const suffix = search.toString() ? `?${search.toString()}` : "";
     return request<MemoResponse>(`/api/v1/memos/${memoId}${suffix}`);
   },
+
+  listMemoRevisions: (memoId: string) =>
+    request<ListMemoRevisionsResponse>(`/api/v1/memos/${memoId}/revisions`),
+
+  restoreMemoRevision: (memoId: string, revisionId: string) =>
+    request<MemoResponse>(`/api/v1/memos/${memoId}/revisions/${revisionId}/restore`, {
+      method: "POST",
+      body: JSON.stringify({}),
+    }),
 
   listResources: () => request<ListResourcesResponse>("/api/v1/resources"),
 

@@ -36,6 +36,19 @@ export type MemoDetail = MemoSummary & {
   mergedIntoMemoId: string | null;
 };
 
+export type MemoRevision = {
+  id: string;
+  memoId: string;
+  revision: number;
+  title: string | null;
+  tags: string[];
+  contentMarkdown: string;
+  contentText: string;
+  contentHash: string;
+  createdBy: string;
+  createdAt: string;
+};
+
 export type ResourceKind = "image" | "attachment";
 
 export type Resource = {

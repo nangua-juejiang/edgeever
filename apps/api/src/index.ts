@@ -12,6 +12,7 @@ import {
   NotebookCreateSchema,
   NotebookUpdateSchema,
   type MemoDetail,
+  type MemoRevision,
   type MemoSummary,
   type Notebook,
   type Resource,
@@ -81,6 +82,20 @@ type MemoDetailRow = MemoSummaryRow & {
   content_hash: string;
 };
 
+type MemoRevisionRow = {
+  id: string;
+  memo_id: string;
+  revision: number;
+  title: string | null;
+  tags_json: string;
+  content_json: string;
+  content_markdown: string;
+  content_text: string;
+  content_hash: string;
+  created_by: string;
+  created_at: string;
+};
+
 type UserRow = {
   id: string;
   username: string;
@@ -145,6 +160,7 @@ const SESSION_TOKEN_BYTES = 32;
 const DEFAULT_SESSION_TTL_DAYS = 30;
 const DEFAULT_R2_BUCKET_NAME = "edgeever-resources";
 const MAX_IMAGE_UPLOAD_BYTES = 10 * 1024 * 1024;
+const REVISION_SNAPSHOT_INTERVAL_MS = 5 * 60 * 1000;
 const SUPPORTED_IMAGE_MIME_TYPES = new Set([
   "image/png",
   "image/jpeg",
@@ -465,6 +481,84 @@ app.get("/api/v1/memos/:id", async (c) => {
   return c.json({ memo });
 });
 
+app.get("/api/v1/memos/:id/revisions", async (c) => {
+  const memoId = c.req.param("id");
+  const memo = await getMemoDetail(c.env.DB, memoId);
+
+  if (!memo) {
+    return notFound(c, "Memo not found");
+  }
+
+  const limit = clampNumber(Number(c.req.query("limit") ?? 50), 1, 100);
+  const rows = await c.env.DB.prepare(
+    `SELECT id, memo_id, revision, title, tags_json, content_json, content_markdown,
+            content_text, content_hash, created_by, created_at
+     FROM memo_revisions
+     WHERE memo_id = ?
+     ORDER BY revision DESC, created_at DESC
+     LIMIT ?`
+  )
+    .bind(memoId, limit)
+    .all<MemoRevisionRow>();
+
+  return c.json({ revisions: rows.results.map(mapMemoRevision) });
+});
+
+app.post("/api/v1/memos/:id/revisions/:revisionId/restore", async (c) => {
+  const memoId = c.req.param("id");
+  const revisionId = c.req.param("revisionId");
+  const actor = getAuditActor(c);
+  const actorLabel = getActorLabel(c);
+  const current = await getMemoDetailRow(c.env.DB, memoId);
+
+  if (!current) {
+    return notFound(c, "Memo not found");
+  }
+
+  const revision = await getMemoRevisionRow(c.env.DB, memoId, revisionId);
+
+  if (!revision) {
+    return notFound(c, "Memo revision not found");
+  }
+
+  const tags = parseJsonArray(revision.tags_json);
+  const contentJson = parseDoc(revision.content_json);
+  const contentMarkdown = revision.content_markdown || docToMarkdown(contentJson);
+  const contentText = revision.content_text || docToText(contentJson);
+  const title = revision.title ?? deriveTitle(contentText);
+  const excerpt = createExcerpt(contentText || title || "");
+  const contentHash = await sha256(contentMarkdown + JSON.stringify(contentJson));
+  const nextRevision = current.revision + 1;
+  const now = isoNow();
+
+  await c.env.DB.batch([
+    createMemoRevisionStatement(c.env.DB, current, actorLabel, now),
+    c.env.DB.prepare(
+      `UPDATE memos
+       SET title = ?, excerpt = ?, tags_json = ?, updated_by = ?, updated_at = ?
+       WHERE id = ? AND is_deleted = 0`
+    ).bind(title, excerpt, JSON.stringify(tags), actorLabel, now, memoId),
+    c.env.DB.prepare(
+      `UPDATE memo_contents
+       SET content_json = ?, content_markdown = ?, content_text = ?, content_hash = ?,
+           revision = ?, updated_at = ?
+       WHERE memo_id = ?`
+    ).bind(JSON.stringify(contentJson), contentMarkdown, contentText, contentHash, nextRevision, now, memoId),
+    c.env.DB.prepare(`DELETE FROM memos_fts WHERE memo_id = ?`).bind(memoId),
+    c.env.DB.prepare(
+      `INSERT INTO memos_fts (memo_id, title, content_text, tags)
+       VALUES (?, ?, ?, ?)`
+    ).bind(memoId, title, contentText, tags.join(" ")),
+    auditStatement(c.env.DB, actor.actorType, actor.actorId, "memo.revision_restore", "memo", memoId, {
+      revisionId,
+      restoredRevision: revision.revision,
+      revision: nextRevision,
+    }),
+  ]);
+
+  return c.json({ memo: await getMemoDetail(c.env.DB, memoId) });
+});
+
 app.get("/api/v1/resources", async (c) => {
   const limit = clampNumber(Number(c.req.query("limit") ?? 500), 1, 500);
   const [rows, stats] = await Promise.all([
@@ -666,23 +760,12 @@ app.patch("/api/v1/memos/:id", zValidator("json", MemoUpdateSchema), async (c) =
   const nextRevision = current.revision + 1;
   const contentHash = await sha256(contentMarkdown + JSON.stringify(contentJson));
   const now = isoNow();
+  const revisionStatements = (await shouldSnapshotMemoRevision(c.env.DB, current, title, JSON.stringify(tags), contentHash, now))
+    ? [createMemoRevisionStatement(c.env.DB, current, actorLabel, now)]
+    : [];
 
   await c.env.DB.batch([
-    c.env.DB.prepare(
-      `INSERT INTO memo_revisions (
-        id, memo_id, revision, title, content_json, content_markdown, content_hash, created_by, created_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
-    ).bind(
-      createId("rev"),
-      id,
-      current.revision,
-      current.title,
-      current.content_json,
-      current.content_markdown,
-      current.content_hash,
-      actorLabel,
-      now
-    ),
+    ...revisionStatements,
     c.env.DB.prepare(
       `UPDATE memos
        SET notebook_id = ?, title = ?, excerpt = ?, tags_json = ?, updated_by = ?, updated_at = ?
@@ -1239,6 +1322,19 @@ const mapMemoDetail = (row: MemoDetailRow): MemoDetail => ({
   mergedIntoMemoId: row.merged_into_memo_id,
 });
 
+const mapMemoRevision = (row: MemoRevisionRow): MemoRevision => ({
+  id: row.id,
+  memoId: row.memo_id,
+  revision: row.revision,
+  title: row.title,
+  tags: parseJsonArray(row.tags_json),
+  contentMarkdown: row.content_markdown,
+  contentText: row.content_text,
+  contentHash: row.content_hash,
+  createdBy: row.created_by,
+  createdAt: row.created_at,
+});
+
 const mapResource = (row: ResourceRow): Resource => ({
   id: row.id,
   memoId: row.memo_id,
@@ -1303,6 +1399,96 @@ const getMemoDetailRow = async (
 const getMemoDetail = async (db: D1Database, id: string, includeDeleted = false): Promise<MemoDetail | null> => {
   const row = await getMemoDetailRow(db, id, includeDeleted);
   return row ? mapMemoDetail(row) : null;
+};
+
+const getMemoRevisionRow = async (
+  db: D1Database,
+  memoId: string,
+  revisionId: string
+): Promise<MemoRevisionRow | null> =>
+  db
+    .prepare(
+      `SELECT id, memo_id, revision, title, tags_json, content_json, content_markdown,
+              content_text, content_hash, created_by, created_at
+       FROM memo_revisions
+       WHERE id = ? AND memo_id = ?`
+    )
+    .bind(revisionId, memoId)
+    .first<MemoRevisionRow>();
+
+const getLatestMemoRevisionRow = async (db: D1Database, memoId: string): Promise<MemoRevisionRow | null> =>
+  db
+    .prepare(
+      `SELECT id, memo_id, revision, title, tags_json, content_json, content_markdown,
+              content_text, content_hash, created_by, created_at
+       FROM memo_revisions
+       WHERE memo_id = ?
+       ORDER BY created_at DESC, revision DESC
+       LIMIT 1`
+    )
+    .bind(memoId)
+    .first<MemoRevisionRow>();
+
+const createMemoRevisionStatement = (
+  db: D1Database,
+  current: MemoDetailRow,
+  actorLabel: string,
+  createdAt: string
+) =>
+  db
+    .prepare(
+      `INSERT INTO memo_revisions (
+        id, memo_id, revision, title, content_json, content_markdown,
+        content_hash, created_by, created_at, tags_json, content_text
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    )
+    .bind(
+      createId("rev"),
+      current.id,
+      current.revision,
+      current.title,
+      current.content_json,
+      current.content_markdown,
+      current.content_hash,
+      actorLabel,
+      createdAt,
+      current.tags_json,
+      current.content_text
+    );
+
+const shouldSnapshotMemoRevision = async (
+  db: D1Database,
+  current: MemoDetailRow,
+  nextTitle: string | null,
+  nextTagsJson: string,
+  nextContentHash: string,
+  now: string
+) => {
+  const changed =
+    (current.title ?? "") !== (nextTitle ?? "") ||
+    current.tags_json !== nextTagsJson ||
+    current.content_hash !== nextContentHash;
+
+  if (!changed) {
+    return false;
+  }
+
+  const latest = await getLatestMemoRevisionRow(db, current.id);
+
+  if (!latest) {
+    return true;
+  }
+
+  const alreadyCapturedCurrent =
+    (latest.title ?? "") === (current.title ?? "") &&
+    latest.tags_json === current.tags_json &&
+    latest.content_hash === current.content_hash;
+
+  if (alreadyCapturedCurrent) {
+    return false;
+  }
+
+  return Date.parse(now) - Date.parse(latest.created_at) >= REVISION_SNAPSHOT_INTERVAL_MS;
 };
 
 const getResourceRow = async (db: D1Database, id: string): Promise<ResourceRow | null> =>
