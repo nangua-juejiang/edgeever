@@ -11,7 +11,6 @@ import { Switch } from "@/components/ui/switch";
 import { api } from "@/lib/api";
 import { cn, formatDateTime } from "@/lib/utils";
 import { AppConfirmDialog } from "./dialogs/ConfirmDialogs";
-import { EvernoteImportCard } from "./EvernoteImportCard";
 
 const ALL_TOKEN_SCOPES = [
   "read:notebooks",
@@ -672,7 +671,6 @@ export const SettingsPane = ({
             imageCompressionEnabled={imageCompressionEnabled}
             onImageCompressionChange={onImageCompressionChange}
           />
-          <EvernoteImportCard />
           <TokenCard
             name={name}
             onNameChange={setName}
