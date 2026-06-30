@@ -22,36 +22,38 @@ export const EVERNOTE_MIGRATION_GUIDE = {
   steps: [
     {
       index: "1",
-      title: "第一步：配置 EdgeEver MCP 授权（获取 MCP Token）",
+      title: "第一步：配置与安装 EdgeEver MCP（让 AI 助手配置）",
       list: [
         "登录你的 EdgeEver 网页端，点击左下角的「设置（Settings）」图标。",
-        "在设置面板中找到「API & MCP 授权」卡片。",
-        "点击「生成新 Token」，在输入框内填入 Token 用途（例如：Evernote Migration）。",
-        "生成后复制该 Token 字符串（格式为 \`eev_...\`）。注意：Token 仅在生成时展示一次，请妥善保管。",
+        "在设置面板中复制「MCP 服务端点」（格式为 \`https://域名/mcp\`），并在「API & MCP 授权」中生成一个 MCP Token（格式为 \`eev_...\`）。",
+        "将以下 Prompt 发送给你的 AI 编程助手，让它自动在你的编辑器/终端客户端（如 Claude Code, Cursor, Cline 等）中配置好 EdgeEver MCP 工具：",
+      ],
+      commands: [
+        {
+          label: "复制给 AI 助手：一键配置安装 MCP 服务",
+          language: "sh",
+          code: `你是 AI 编程助手。我已生成了 EdgeEver 的 MCP 端点 <ENDPOINT> 和 Token <TOKEN>。请帮我在我当前使用的客户端（如 Claude Code, Cursor, Cline 等）中配置安装这个 EdgeEver MCP 服务。
+- 桥接脚本为项目根目录的：\`scripts/edgeever-mcp-stdio.mjs\`
+- 运行时需要注入环境变量：\`EDGEEVER_URL="<域名地址>" \` 和 \`EDGEEVER_TOKEN="<MCP_TOKEN>"\`。`,
+        },
       ],
     },
     {
       index: "2",
-      title: "第二步：把以下 Prompt 粘贴给 AI 编程助手（自动执行）",
+      title: "第二步：让 AI 助手自动执行印象笔记迁移",
       paragraphs: [
-        "如果你正在使用 AI 编程助手（如 Antigravity、Claude Code、Cursor 等），直接复制下方精简 Prompt 发送给它，AI 将一键搞定全部工具安装与数据导入：",
+        "当 AI 助手配置好 MCP 之后，请将以下 Prompt 发送给它，让它全自动拉取印象笔记数据并导入：",
       ],
       commands: [
         {
-          label: "一键复制 Prompt 发送给 AI 助手",
+          label: "复制给 AI 助手：一键同步并导入笔记",
           language: "sh",
           code: `你是 AI 编程助手。请帮我把本地的印象笔记全量迁移到我部署的 EdgeEver 实例中：
 1. 检查本地是否安装了 \`evernote-backup\`。若未安装请使用 \`pipx install evernote-backup\` 自动安装。
 2. 提示我输入印象笔记用户名密码并初始化数据库（指定 china 后端），随后同步数据并导出到 \`./evernote-export\` 目录。
-3. 询问我当前 EdgeEver 的服务地址和先前在网页端生成的 MCP Token。
-4. 运行内置导入脚本完成批量同步：
-   \`EDGEEVER_URL="<地址>" EDGEEVER_TOKEN="<Token>" bun scripts/import-evernote-enex-via-mcp.mjs --input "./evernote-export" --yes\`
-
-请向我确认所需的配置项（账号密码、Token、服务地址），收到后直接自动化并发执行上述步骤。`,
+3. 在 EdgeEver 项目根目录下，使用先前配置的 URL 和 Token 运行内置导入脚本完成批量导入：
+   \`EDGEEVER_URL="<地址>" EDGEEVER_TOKEN="<Token>" bun scripts/import-evernote-enex-via-mcp.mjs --input "./evernote-export" --yes\``,
         },
-      ],
-      list: [
-        "💡 手动模式备用：如果您不使用 AI 助手，具体执行命令在根目录 \`scripts/import-evernote-enex-via-mcp.mjs\` 的头部注释中有详细引导。",
       ],
     },
     {
@@ -59,7 +61,7 @@ export const EVERNOTE_MIGRATION_GUIDE = {
       title: "第三步：在网页端验证结果",
       list: [
         "导入完成后，回到 EdgeEver 网页端刷新页面。",
-        "检查左侧栏，确认印象笔记原有的「笔记本组（堆叠）」和笔记本层级结构已完美还原。",
+        "检查左侧栏，确认原有的「笔记本组（堆叠）」层级结构已完美还原。",
         "打开几篇包含多张图片的笔记，验证其中的图片是否已成功加载并能清晰显示。",
         "验证完毕后，你可以回到「设置」->「API & MCP 授权」中吊销此 Token 以保障安全。",
       ],
