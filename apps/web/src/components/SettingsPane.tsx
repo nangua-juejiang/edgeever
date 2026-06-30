@@ -348,11 +348,11 @@ const ScopePicker = ({ availableScopes, selectedScopes, onToggleScope }: ScopePi
 interface TokenListProps {
   tokens: ApiToken[];
   isLoading: boolean;
-  isRevoking: boolean;
-  onRevoke: (token: ApiToken) => void;
+  isDeleting: boolean;
+  onDelete: (token: ApiToken) => void;
 }
 
-const TokenList = ({ tokens, isLoading, isRevoking, onRevoke }: TokenListProps) => {
+const TokenList = ({ tokens, isLoading, isDeleting, onDelete }: TokenListProps) => {
   const [copiedAction, setCopiedAction] = useState<{ tokenId: string; action: "token" | "config" } | null>(null);
 
   const handleCopy = async (token: ApiToken, action: "token" | "config") => {
@@ -447,10 +447,10 @@ const TokenList = ({ tokens, isLoading, isRevoking, onRevoke }: TokenListProps) 
               size="icon"
               variant="danger"
               className="h-9 w-full shrink-0 sm:w-9"
-              title="撤销 Token"
-              aria-label="撤销 Token"
-              disabled={token.isRevoked || isRevoking}
-              onClick={() => onRevoke(token)}
+              title="删除 Token"
+              aria-label="删除 Token"
+              disabled={token.isRevoked || isDeleting}
+              onClick={() => onDelete(token)}
             >
               <Trash2 className="h-4 w-4" />
             </Button>
@@ -470,10 +470,10 @@ interface TokenCardProps {
   tokens: ApiToken[];
   isCreating: boolean;
   isLoadingTokens: boolean;
-  isRevoking: boolean;
+  isDeletingToken: boolean;
   onSubmit: (event: FormEvent<HTMLFormElement>) => void;
   onToggleScope: (scope: string) => void;
-  onRevokeToken: (token: ApiToken) => void;
+  onDeleteToken: (token: ApiToken) => void;
 }
 
 const TokenCard = ({
@@ -485,10 +485,10 @@ const TokenCard = ({
   tokens,
   isCreating,
   isLoadingTokens,
-  isRevoking,
+  isDeletingToken,
   onSubmit,
   onToggleScope,
-  onRevokeToken,
+  onDeleteToken,
 }: TokenCardProps) => (
   <Card className="w-full min-w-0 overflow-hidden shadow-none">
     <CardHeader className="p-4">
@@ -531,8 +531,8 @@ const TokenCard = ({
         <TokenList
           tokens={tokens}
           isLoading={isLoadingTokens}
-          isRevoking={isRevoking}
-          onRevoke={onRevokeToken}
+          isDeleting={isDeletingToken}
+          onDelete={onDeleteToken}
         />
       </div>
     </CardContent>
@@ -582,7 +582,7 @@ export const SettingsPane = ({
   const [selectedScopes, setSelectedScopes] = useState<Set<string>>(() => new Set(ALL_TOKEN_SCOPES));
   const [scopeDefaultsSynced, setScopeDefaultsSynced] = useState(false);
   const [createdToken, setCreatedToken] = useState<{ token: string; apiToken: ApiToken } | null>(null);
-  const [tokenRevokeConfirmation, setTokenRevokeConfirmation] = useState<ApiToken | null>(null);
+  const [tokenDeleteConfirmation, setTokenDeleteConfirmation] = useState<ApiToken | null>(null);
 
   const tokensQuery = useQuery({
     queryKey: ["api-tokens"],
@@ -611,7 +611,7 @@ export const SettingsPane = ({
     },
   });
 
-  const revokeMutation = useMutation({
+  const deleteTokenMutation = useMutation({
     mutationFn: api.revokeApiToken,
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ["api-tokens"] });
@@ -682,26 +682,26 @@ export const SettingsPane = ({
             tokens={tokens}
             isCreating={createMutation.isPending}
             isLoadingTokens={tokensQuery.isLoading}
-            isRevoking={revokeMutation.isPending}
+            isDeletingToken={deleteTokenMutation.isPending}
             onSubmit={handleSubmit}
             onToggleScope={toggleScope}
-            onRevokeToken={setTokenRevokeConfirmation}
+            onDeleteToken={setTokenDeleteConfirmation}
           />
           <SessionCard authRequired={authRequired} isLoggingOut={isLoggingOut} onLogout={onLogout} />
         </div>
       </div>
 
-      {tokenRevokeConfirmation && (
+      {tokenDeleteConfirmation && (
         <AppConfirmDialog
-          title={`确定要撤销 Token「${tokenRevokeConfirmation.name}」吗？`}
-          description="撤销操作不可逆。一旦撤销，使用此 Token 进行 API 或 MCP 调用的一切客户端将立即失效并被拒绝访问。"
-          confirmLabel="确认撤销"
-          isWorking={revokeMutation.isPending}
+          title={`确定要删除 Token「${tokenDeleteConfirmation.name}」吗？`}
+          description="删除操作不可逆。一旦删除，使用此 Token 进行 API 或 MCP 调用的一切客户端将立即失效并被拒绝访问。"
+          confirmLabel="确认删除"
+          isWorking={deleteTokenMutation.isPending}
           tone="danger"
-          onCancel={() => setTokenRevokeConfirmation(null)}
+          onCancel={() => setTokenDeleteConfirmation(null)}
           onConfirm={() => {
-            revokeMutation.mutate(tokenRevokeConfirmation.id, {
-              onSuccess: () => setTokenRevokeConfirmation(null),
+            deleteTokenMutation.mutate(tokenDeleteConfirmation.id, {
+              onSuccess: () => setTokenDeleteConfirmation(null),
             });
           }}
         />
