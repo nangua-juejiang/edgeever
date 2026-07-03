@@ -34,7 +34,8 @@ export const siteCopy = {
       about: "关于项目",
       contact: "联系我们",
       demo: "在线演示",
-      languageLabel: "English",
+      language: "语言",
+      languageMenu: "切换语言",
     },
     hero: {
       slogan: "基于 Cloudflare 全家桶自托管的免费开源『印象笔记』",
@@ -108,7 +109,8 @@ export const siteCopy = {
       about: "About",
       contact: "Contact",
       demo: "Demo",
-      languageLabel: "简体中文",
+      language: "Language",
+      languageMenu: "Change language",
     },
     hero: {
       slogan: "A free, open-source Evernote alternative self-hosted on Cloudflare.",

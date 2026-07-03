@@ -2,13 +2,12 @@
 import Container from "@/components/container.astro";
 import Link from "@/components/ui/link.astro";
 import Dropdown from "./dropdown.astro";
+import LanguageSwitcher from "./language-switcher.astro";
 import { Astronav, MenuItems, MenuIcon } from "astro-navbar";
 import { getLocalizedPath, getSiteLocale, siteCopy } from "@/i18n";
 
 const locale = getSiteLocale(Astro.url.pathname);
 const copy = siteCopy[locale].nav;
-const alternateLocale = locale === "zh-CN" ? "en-US" : "zh-CN";
-const alternatePath = getLocalizedPath(alternateLocale, Astro.url.pathname);
 const menuitems = [
   {
     title: copy.features,
@@ -84,14 +83,14 @@ const menuitems = [
         <div class="lg:hidden flex items-center mt-3 gap-4">
         <Link href="https://demo.edgeever.org" target="_blank" style="muted" block size="md">{copy.demo}</Link>
           <Link href="https://github.com/msh01/edgeever" target="_blank" size="md" block>GitHub</Link>
-          <a href={alternatePath} class="text-sm text-gray-600 hover:text-gray-900">{copy.languageLabel}</a>
+          <LanguageSwitcher pathname={Astro.url.pathname} compact />
         </div>
       </MenuItems>
     </Astronav>
     <div>
       <div class="hidden lg:flex items-center gap-4">
         <a href="https://demo.edgeever.org" target="_blank" class="text-gray-600 hover:text-gray-900 transition">{copy.demo}</a>
-        <a href={alternatePath} class="text-gray-600 hover:text-gray-900 transition">{copy.languageLabel}</a>
+        <LanguageSwitcher pathname={Astro.url.pathname} />
         <Link href="https://github.com/msh01/edgeever" target="_blank" size="md">GitHub</Link>
       </div>
     </div>
