@@ -51,21 +51,21 @@ const features = [
     ],
   },
   {
-    title: "私有安全，多端随手记录",
+    title: "多端随手记录，同步几乎无感",
     summary:
-      "面向个人自用的单用户登录模型，兼顾密码保护、PWA 安装和离线编辑草稿。",
+      "电脑、手机、平板都能直接打开使用，记录和同步尽量贴近本地应用的顺滑体验。",
     icon: "bx:bx-shield-quarter",
     accent: "secure",
     points: [
-      "密码使用 PBKDF2-SHA256 hash，API Token 可独立授权外部工具。",
-      "支持 PC 与移动端网页访问，也可以安装成 PWA 使用。",
-      "已有笔记支持离线编辑草稿和本地同步队列，弱网时也能继续记录。",
+      "支持 PC 与移动端网页访问，也可以安装成 PWA，随手打开就能记。",
+      "已有笔记支持离线编辑草稿和本地同步队列，弱网时也能先写后同步。",
+      "单用户登录、PBKDF2-SHA256 密码 hash 与独立 API Token，安全能力放在顺手体验背后。",
     ],
   },
 ];
 ---
 
-<section class="mt-20 md:mt-32 relative overflow-hidden" aria-labelledby="features">
+<section class="mt-12 md:mt-20 relative overflow-hidden" aria-labelledby="features">
   <div class="absolute top-32 -left-24 w-72 h-72 bg-brand-border/10 rounded-full blur-3xl -z-10"></div>
   <div class="absolute bottom-24 -right-24 w-72 h-72 bg-slate-200/30 rounded-full blur-3xl -z-10"></div>
 
@@ -226,6 +226,8 @@ const features = [
 
                 {feature.accent === "secure" && (
                   <div class="secure-scene">
+                    <div class="secure-link secure-link-desktop"></div>
+                    <div class="secure-link secure-link-phone"></div>
                     <div class="secure-desktop">
                       <div class="secure-topbar">
                         <b></b>
@@ -241,12 +243,17 @@ const features = [
                       <i></i>
                       <i></i>
                     </div>
-                    <div class="secure-shield">
-                      <Icon name="bx:bx-lock-alt" class="h-10 w-10" />
+                    <div class="secure-sync">
+                      <Icon name="bx:bx-sync" class="h-10 w-10" />
+                      <span>Sync</span>
                     </div>
                     <div class="secure-queue">
                       <Icon name="bx:bx-wifi-off" class="h-5 w-5" />
                       <span>Offline queue</span>
+                    </div>
+                    <div class="secure-status">
+                      <Icon name="bx:bx-check" class="h-4 w-4" />
+                      <span>Auto saved</span>
                     </div>
                   </div>
                 )}
@@ -306,8 +313,9 @@ const features = [
   .open-chips,
   .secure-desktop,
   .secure-phone,
-  .secure-shield,
-  .secure-queue {
+  .secure-sync,
+  .secure-queue,
+  .secure-status {
     position: absolute;
     border: 1px solid rgb(203 213 225 / 0.72);
     background: rgb(255 255 255 / 0.86);
@@ -687,6 +695,32 @@ const features = [
     transition: transform 300ms ease;
   }
 
+  .secure-link {
+    position: absolute;
+    z-index: 0;
+    height: 2px;
+    border-radius: 999px;
+    background: repeating-linear-gradient(
+      90deg,
+      rgb(var(--edgeever-brand-rgb) / 0.42) 0 10px,
+      transparent 10px 18px
+    );
+  }
+
+  .secure-link-desktop {
+    top: 47%;
+    left: 28%;
+    width: 160px;
+    rotate: 8deg;
+  }
+
+  .secure-link-phone {
+    top: 55%;
+    right: 18%;
+    width: 130px;
+    rotate: -18deg;
+  }
+
   .secure-desktop {
     top: 10%;
     left: 6%;
@@ -756,19 +790,28 @@ const features = [
     height: 11px;
   }
 
-  .secure-shield {
-    top: 47%;
-    left: 49%;
+  .secure-sync {
+    top: 46%;
+    left: 50%;
     display: grid;
-    width: 116px;
-    height: 132px;
+    width: 112px;
+    height: 112px;
+    gap: 4px;
+    align-content: center;
+    justify-items: center;
     place-items: center;
     translate: -50% -50%;
-    clip-path: polygon(50% 0, 100% 18%, 92% 76%, 50% 100%, 8% 76%, 0 18%);
+    border-radius: 999px;
     color: var(--edgeever-brand-text);
     background:
       radial-gradient(circle at 50% 30%, rgb(var(--edgeever-brand-rgb) / 0.18), transparent 44%),
       rgb(255 255 255 / 0.92);
+  }
+
+  .secure-sync span {
+    font-size: 12px;
+    font-weight: 800;
+    color: var(--edgeever-brand-text);
   }
 
   .secure-queue {
@@ -780,6 +823,22 @@ const features = [
     padding: 13px 16px;
     border-radius: 999px;
     color: var(--edgeever-brand-text);
+  }
+
+  .secure-status {
+    right: 2%;
+    top: 10%;
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    padding: 12px 15px;
+    border-radius: 999px;
+    color: var(--edgeever-brand-text);
+  }
+
+  .secure-status span {
+    font-size: 12px;
+    font-weight: 800;
   }
 
   @media (max-width: 767px) {
@@ -862,9 +921,24 @@ const features = [
       height: 190px;
     }
 
-    .secure-shield {
-      width: 94px;
-      height: 108px;
+    .secure-sync {
+      width: 88px;
+      height: 88px;
+    }
+
+    .secure-link-desktop {
+      left: 25%;
+      width: 120px;
+    }
+
+    .secure-link-phone {
+      right: 16%;
+      width: 104px;
+    }
+
+    .secure-status {
+      right: 0;
+      top: 6%;
     }
   }
 </style>
