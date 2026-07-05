@@ -4,7 +4,7 @@ import { EditorContent, useEditor } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
 import Image from "@tiptap/extension-image";
 import Placeholder from "@tiptap/extension-placeholder";
-import { Bold, ImagePlus, List, Minus, Quote } from "lucide-react";
+import { Bold, Check, ChevronDown, ImagePlus, List, Minus, Quote } from "lucide-react";
 import { docToMarkdown, emptyDoc, markdownToDoc, type MemoDetail, type Notebook, type Resource, type TiptapDoc } from "@edgeever/shared";
 import { getNotebookMoveOptions } from "@/lib/app-helpers";
 import { compressImageForUpload } from "@/lib/image-compression";
@@ -104,6 +104,7 @@ const MobileTiptapEditorApp = () => {
   const memoRef = useRef<MemoDetail | null>(null);
   const [notebooks, setNotebooks] = useState<Notebook[]>([]);
   const [notebookUpdatePending, setNotebookUpdatePending] = useState(false);
+  const [notebookSheetOpen, setNotebookSheetOpen] = useState(false);
   const [title, setTitle] = useState("");
   const titleRef = useRef("");
   const [tagsText, setTagsText] = useState("");
@@ -411,6 +412,7 @@ const MobileTiptapEditorApp = () => {
       setSaveStateStable("error");
     } finally {
       setNotebookUpdatePending(false);
+      setNotebookSheetOpen(false);
     }
   };
 
@@ -624,6 +626,8 @@ const MobileTiptapEditorApp = () => {
         : "";
   const editorActionDisabled =
     !memo || !editor || saveState === "loading" || saveState === "compressing" || saveState === "uploading" || saveState === "leaving";
+  const currentNotebookLabel =
+    notebookOptions.find((notebook) => notebook.id === memo?.notebookId)?.name ?? (notebookOptions.length === 0 ? "等待分类" : "笔记本");
 
   const fallbackMarkdown = memo ? docToMarkdown(contentJsonRef.current) : "";
 
@@ -662,23 +666,16 @@ const MobileTiptapEditorApp = () => {
           onChange={(event) => handleTitleChange(event.target.value)}
         />
         <div className="mobile-editor-meta-row">
-          <select
-            className="mobile-editor-notebook-select"
-            value={memo?.notebookId ?? ""}
+          <button
+            className="mobile-editor-notebook-button"
+            type="button"
             aria-label="所在笔记本"
             disabled={!memo || notebookUpdatePending || saveState === "loading" || notebookOptions.length === 0}
-            onChange={(event) => void handleNotebookChange(event.target.value)}
+            onClick={() => setNotebookSheetOpen(true)}
           >
-            {notebookOptions.length === 0 ? (
-              <option value={memo?.notebookId ?? ""}>等待分类</option>
-            ) : (
-              notebookOptions.map((notebook) => (
-                <option key={notebook.id} value={notebook.id}>
-                  {notebook.selectLabel}
-                </option>
-              ))
-            )}
-          </select>
+            <span>{currentNotebookLabel}</span>
+            <ChevronDown aria-hidden="true" size={14} strokeWidth={2.2} />
+          </button>
           <input
             className="mobile-editor-tags"
             value={tagsText}
@@ -761,6 +758,46 @@ const MobileTiptapEditorApp = () => {
             void handleImageUpload(file);
           }}
         />
+
+        {notebookSheetOpen && (
+          <div className="mobile-editor-sheet-backdrop" role="presentation" onClick={() => setNotebookSheetOpen(false)}>
+            <section
+              className="mobile-editor-notebook-sheet"
+              role="dialog"
+              aria-modal="true"
+              aria-label="选择笔记本"
+              onClick={(event) => event.stopPropagation()}
+            >
+              <div className="mobile-editor-notebook-sheet-handle" aria-hidden="true" />
+              <div className="mobile-editor-notebook-sheet-header">
+                <h2>所在笔记本</h2>
+                <button type="button" onClick={() => setNotebookSheetOpen(false)}>
+                  关闭
+                </button>
+              </div>
+              <div className="mobile-editor-notebook-list">
+                {notebookOptions.map((notebook) => {
+                  const selected = notebook.id === memo?.notebookId;
+
+                  return (
+                    <button
+                      key={notebook.id}
+                      className="mobile-editor-notebook-option"
+                      type="button"
+                      aria-current={selected ? "page" : undefined}
+                      disabled={notebookUpdatePending}
+                      style={{ paddingLeft: `${16 + notebook.depth * 18}px` }}
+                      onClick={() => void handleNotebookChange(notebook.id)}
+                    >
+                      <span>{notebook.name}</span>
+                      {selected && <Check aria-hidden="true" size={16} strokeWidth={2.4} />}
+                    </button>
+                  );
+                })}
+              </div>
+            </section>
+          </div>
+        )}
 
         <div className="edgeever-mobile-tiptap-editor">
           <EditorContent editor={editor} />
