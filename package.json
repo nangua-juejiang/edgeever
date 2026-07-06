@@ -20,6 +20,7 @@
     "preview:web": "vite preview --config apps/web/vite.config.ts --host 127.0.0.1 --port 4173",
     "preview:site": "bun --cwd apps/site preview",
     "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test:restore-deleted-notebook": "bun scripts/test-restore-deleted-notebook.mjs",
     "db:migrate:local": "bun scripts/run-wrangler.mjs d1 migrations apply DB --local",
     "db:migrate:remote": "bun scripts/run-wrangler.mjs d1 migrations apply DB --remote",
     "auth:hash": "bun scripts/hash-password.mjs",

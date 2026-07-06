@@ -1622,19 +1622,28 @@ app.post("/api/v1/memos/:id/restore", async (c) => {
 
   const tags = parseJsonArray(current.tags_json);
   const now = isoNow();
+  const originalNotebook = await getNotebook(c.env.DB, current.notebook_id);
+  const restoreNotebookId = originalNotebook ? current.notebook_id : "nb_inbox";
+
+  if (!originalNotebook && !(await getNotebook(c.env.DB, restoreNotebookId))) {
+    return conflict(c, "restore_notebook_missing", "Original notebook was deleted and the default inbox is unavailable.");
+  }
 
   await c.env.DB.batch([
     c.env.DB.prepare(
       `UPDATE memos
-       SET is_deleted = 0, deleted_at = NULL, updated_at = ?
+       SET notebook_id = ?, is_deleted = 0, deleted_at = NULL, updated_at = ?
        WHERE id = ? AND is_deleted = 1`
-    ).bind(now, id),
+    ).bind(restoreNotebookId, now, id),
     c.env.DB.prepare(`DELETE FROM memos_fts WHERE memo_id = ?`).bind(id),
     c.env.DB.prepare(
       `INSERT INTO memos_fts (memo_id, title, content_text, tags)
        VALUES (?, ?, ?, ?)`
     ).bind(id, current.title, current.content_text, tags.join(" ")),
-    auditStatement(c.env.DB, actor.actorType, actor.actorId, "memo.restore", "memo", id, {}),
+    auditStatement(c.env.DB, actor.actorType, actor.actorId, "memo.restore", "memo", id, {
+      fromNotebookId: current.notebook_id,
+      toNotebookId: restoreNotebookId,
+    }),
   ]);
 
   return c.json({ memo: await getMemoDetail(c.env.DB, id) });
