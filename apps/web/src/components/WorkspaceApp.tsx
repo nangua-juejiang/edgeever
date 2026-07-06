@@ -140,6 +140,18 @@ type MemoListQueryData = {
   pageParams: unknown[];
 };
 
+type ListNotebooksQueryData = {
+  notebooks: Notebook[];
+};
+
+type MemoDeleteOptimisticContext = {
+  previousMemoLists: Array<[readonly unknown[], MemoListQueryData | undefined]>;
+  previousMemoDetails: Array<[readonly unknown[], { memo: MemoDetail } | undefined]>;
+  previousNotebooks: ListNotebooksQueryData | undefined;
+  previousActivePane: Pane;
+  previousSelectedMemoId: string | null;
+};
+
 const memoToSummary = (memo: MemoDetail): MemoSummary => ({
   id: memo.id,
   notebookId: memo.notebookId,
@@ -261,6 +273,85 @@ const updateMemoSummaryInLists = (queryClient: QueryClient, memo: MemoDetail) =>
       queryClient.setQueryData(queryKey, { ...current, pages });
     }
   }
+};
+
+const collectMemoSummariesFromCache = (queryClient: QueryClient, memoIds: Set<string>) => {
+  const summaries = new Map<string, MemoSummary>();
+
+  for (const [, current] of queryClient.getQueriesData<MemoListQueryData>({ queryKey: ["memos"] })) {
+    for (const page of current?.pages ?? []) {
+      for (const memo of page.memos) {
+        if (memoIds.has(memo.id) && !summaries.has(memo.id)) {
+          summaries.set(memo.id, memo);
+        }
+      }
+    }
+  }
+
+  for (const [, current] of queryClient.getQueriesData<{ memo: MemoDetail }>({ queryKey: ["memo"] })) {
+    if (current?.memo && memoIds.has(current.memo.id) && !summaries.has(current.memo.id)) {
+      summaries.set(current.memo.id, memoToSummary(current.memo));
+    }
+  }
+
+  return Array.from(summaries.values());
+};
+
+const removeMemoSummariesFromLists = (queryClient: QueryClient, memoIds: Set<string>) => {
+  queryClient.setQueriesData<MemoListQueryData>({ queryKey: ["memos"] }, (current) => {
+    if (!current) {
+      return current;
+    }
+
+    let changed = false;
+    const pages = current.pages.map((page) => {
+      const memos = page.memos.filter((memo) => !memoIds.has(memo.id));
+
+      if (memos.length === page.memos.length) {
+        return page;
+      }
+
+      changed = true;
+      return {
+        ...page,
+        memos,
+        totalCount: Math.max(0, page.totalCount - (page.memos.length - memos.length)),
+      };
+    });
+
+    return changed ? { ...current, pages } : current;
+  });
+};
+
+const decrementNotebookMemoCounts = (queryClient: QueryClient, removedMemos: MemoSummary[]) => {
+  if (removedMemos.length === 0) {
+    return;
+  }
+
+  const countsByNotebook = new Map<string, number>();
+
+  for (const memo of removedMemos) {
+    if (memo.isDeleted) {
+      continue;
+    }
+
+    countsByNotebook.set(memo.notebookId, (countsByNotebook.get(memo.notebookId) ?? 0) + 1);
+  }
+
+  if (countsByNotebook.size === 0) {
+    return;
+  }
+
+  queryClient.setQueryData<ListNotebooksQueryData>(["notebooks"], (current) =>
+    current
+      ? {
+          notebooks: current.notebooks.map((notebook) => {
+            const removedCount = countsByNotebook.get(notebook.id) ?? 0;
+            return removedCount > 0 ? { ...notebook, memoCount: Math.max(0, notebook.memoCount - removedCount) } : notebook;
+          }),
+        }
+      : current
+  );
 };
 
 const getAdjacentMemoIdAfterRemoval = (memos: MemoSummary[], removedMemoIds: Set<string>, anchorMemoId: string) => {
@@ -1248,8 +1339,19 @@ export const WorkspaceApp = ({
 
   const deleteMemosMutation = useMutation({
     mutationFn: api.deleteMemos,
-    onSuccess: async (_, variables) => {
+    onMutate: async (variables): Promise<MemoDeleteOptimisticContext> => {
       const deletedMemoIds = new Set(variables.memoIds);
+      await Promise.all([
+        queryClient.cancelQueries({ queryKey: ["memos"] }),
+        queryClient.cancelQueries({ queryKey: ["memo"] }),
+        queryClient.cancelQueries({ queryKey: ["notebooks"] }),
+      ]);
+
+      const previousMemoLists = queryClient.getQueriesData<MemoListQueryData>({ queryKey: ["memos"] });
+      const previousMemoDetails = queryClient.getQueriesData<{ memo: MemoDetail }>({ queryKey: ["memo"] });
+      const previousNotebooks = queryClient.getQueryData<ListNotebooksQueryData>(["notebooks"]);
+      const removedMemos = collectMemoSummariesFromCache(queryClient, deletedMemoIds);
+
       clearMemoSelection();
 
       if (selectedMemoId && deletedMemoIds.has(selectedMemoId)) {
@@ -1257,11 +1359,37 @@ export const WorkspaceApp = ({
         setActivePane("memos");
       }
 
-      await Promise.all([
-        queryClient.invalidateQueries({ queryKey: ["memos"] }),
-        queryClient.invalidateQueries({ queryKey: ["memo"] }),
-        queryClient.invalidateQueries({ queryKey: ["notebooks"] }),
-        queryClient.invalidateQueries({ queryKey: ["resources"] }),
+      removeMemoSummariesFromLists(queryClient, deletedMemoIds);
+      decrementNotebookMemoCounts(queryClient, removedMemos);
+
+      return { previousMemoLists, previousMemoDetails, previousNotebooks, previousActivePane: activePane, previousSelectedMemoId: selectedMemoId };
+    },
+    onError: (_error, _variables, context) => {
+      context?.previousMemoLists.forEach(([queryKey, data]) => {
+        queryClient.setQueryData(queryKey, data);
+      });
+      context?.previousMemoDetails.forEach(([queryKey, data]) => {
+        queryClient.setQueryData(queryKey, data);
+      });
+      queryClient.setQueryData(["notebooks"], context?.previousNotebooks);
+      setSelectedMemoId(context?.previousSelectedMemoId ?? null);
+      setActivePane(context?.previousActivePane ?? "memos");
+    },
+    onSettled: (_data, _error, variables) => {
+      const refetchType = _error ? "active" : "inactive";
+      const deletedMemoIds = new Set(variables?.memoIds ?? []);
+
+      if (!_error) {
+        for (const memoId of deletedMemoIds) {
+          queryClient.removeQueries({ queryKey: ["memo", memoId] });
+        }
+      }
+
+      void Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["memos"], refetchType }),
+        queryClient.invalidateQueries({ queryKey: ["memo"], refetchType }),
+        queryClient.invalidateQueries({ queryKey: ["notebooks"], refetchType }),
+        queryClient.invalidateQueries({ queryKey: ["resources"], refetchType: "inactive" }),
       ]);
     },
   });
@@ -1269,14 +1397,50 @@ export const WorkspaceApp = ({
   const deleteMemoMutation = useMutation({
     mutationFn: ({ memoId, permanent }: { memoId: string; permanent?: boolean }) =>
       api.deleteMemo(memoId, { permanent }),
-    onSuccess: async (_data, variables) => {
+    onMutate: async (variables): Promise<MemoDeleteOptimisticContext> => {
+      const deletedMemoIds = new Set([variables.memoId]);
+      await Promise.all([
+        queryClient.cancelQueries({ queryKey: ["memos"] }),
+        queryClient.cancelQueries({ queryKey: ["memo", variables.memoId] }),
+        queryClient.cancelQueries({ queryKey: ["notebooks"] }),
+      ]);
+
+      const previousMemoLists = queryClient.getQueriesData<MemoListQueryData>({ queryKey: ["memos"] });
+      const previousMemoDetails = queryClient.getQueriesData<{ memo: MemoDetail }>({ queryKey: ["memo", variables.memoId] });
+      const previousNotebooks = queryClient.getQueryData<ListNotebooksQueryData>(["notebooks"]);
+      const removedMemos = collectMemoSummariesFromCache(queryClient, deletedMemoIds);
+
       if (selectedMemoId === variables.memoId) {
-        setSelectedMemoId(getAdjacentMemoIdAfterRemoval(memos, new Set([variables.memoId]), variables.memoId));
+        setSelectedMemoId(getAdjacentMemoIdAfterRemoval(memos, deletedMemoIds, variables.memoId));
         setActivePane("memos");
       }
-      await Promise.all([
-        queryClient.invalidateQueries({ queryKey: ["memos"] }),
-        queryClient.invalidateQueries({ queryKey: ["notebooks"] }),
+
+      removeMemoSummariesFromLists(queryClient, deletedMemoIds);
+      decrementNotebookMemoCounts(queryClient, removedMemos);
+
+      return { previousMemoLists, previousMemoDetails, previousNotebooks, previousActivePane: activePane, previousSelectedMemoId: selectedMemoId };
+    },
+    onError: (_error, _variables, context) => {
+      context?.previousMemoLists.forEach(([queryKey, data]) => {
+        queryClient.setQueryData(queryKey, data);
+      });
+      context?.previousMemoDetails.forEach(([queryKey, data]) => {
+        queryClient.setQueryData(queryKey, data);
+      });
+      queryClient.setQueryData(["notebooks"], context?.previousNotebooks);
+      setSelectedMemoId(context?.previousSelectedMemoId ?? null);
+      setActivePane(context?.previousActivePane ?? "memos");
+    },
+    onSettled: (_data, _error, variables) => {
+      const refetchType = _error ? "active" : "inactive";
+
+      if (!_error) {
+        queryClient.removeQueries({ queryKey: ["memo", variables?.memoId] });
+      }
+      void Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["memos"], refetchType }),
+        queryClient.invalidateQueries({ queryKey: ["notebooks"], refetchType }),
+        queryClient.invalidateQueries({ queryKey: ["resources"], refetchType: "inactive" }),
       ]);
     },
   });
