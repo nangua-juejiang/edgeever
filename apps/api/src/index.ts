@@ -212,6 +212,7 @@ const PASSWORD_SALT_BYTES = 16;
 const SESSION_TOKEN_BYTES = 32;
 const DEFAULT_SESSION_TTL_DAYS = 5 * 365;
 const MAX_SESSION_TTL_DAYS = 5 * 365;
+const MAX_COOKIE_TTL_DAYS = 400;
 const DEFAULT_R2_BUCKET_NAME = "edgeever-resources";
 const DEMO_SEED_NOTEBOOKS = [
   { id: "nb_inbox", parentId: null, name: "等待分类", slug: "inbox", icon: "notebook", color: "#0f766e", sortOrder: 10 },
@@ -2712,8 +2713,9 @@ const createSession = async (c: AppContext, user: UserRow) => {
   const token = randomToken(SESSION_TOKEN_BYTES);
   const id = createId("sess");
   const now = isoNow();
-  const maxAge = getSessionMaxAge(c.env);
-  const expiresAt = new Date(Date.now() + maxAge * 1000).toISOString();
+  const sessionMaxAge = getSessionMaxAge(c.env);
+  const cookieMaxAge = getSessionCookieMaxAge(c.env);
+  const expiresAt = new Date(Date.now() + sessionMaxAge * 1000).toISOString();
   const ip = c.req.header("CF-Connecting-IP");
   const ipHash = ip ? await sha256(ip) : null;
 
@@ -2734,7 +2736,7 @@ const createSession = async (c: AppContext, user: UserRow) => {
     )
     .run();
 
-  return { id, token, maxAge };
+  return { id, token, maxAge: cookieMaxAge };
 };
 
 const setSessionCookie = (c: AppContext, token: string, maxAge: number) => {
@@ -2917,6 +2919,12 @@ const isTokenScope = (scope: string): scope is TokenScope =>
 const getSessionMaxAge = (env: Bindings) => {
   const days = clampNumber(Number(env.EDGE_EVER_SESSION_TTL_DAYS ?? DEFAULT_SESSION_TTL_DAYS), 1, MAX_SESSION_TTL_DAYS);
   return days * 24 * 60 * 60;
+};
+
+const getSessionCookieMaxAge = (env: Bindings) => {
+  const days = clampNumber(Number(env.EDGE_EVER_SESSION_TTL_DAYS ?? DEFAULT_SESSION_TTL_DAYS), 1, MAX_SESSION_TTL_DAYS);
+  const cookieDays = Math.min(days, MAX_COOKIE_TTL_DAYS);
+  return cookieDays * 24 * 60 * 60;
 };
 
 const hashPassword = async (password: string) => {
