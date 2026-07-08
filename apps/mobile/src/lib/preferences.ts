@@ -4,10 +4,12 @@ const MEMO_LIST_DENSITY_KEY = "edgeever.mobile.memoListDensity";
 const NOTEBOOK_SORT_KEY = "edgeever.mobile.notebookSort";
 const IMAGE_COMPRESSION_KEY = "edgeever.mobile.imageCompressionEnabled";
 const LOCALE_PREFERENCE_KEY = "edgeever.mobile.localePreference";
+const RESOURCE_LAYOUT_KEY = "edgeever.mobile.resourceLayout";
 
 export type MobileMemoListDensity = "preview" | "compact";
 export type MobileNotebookSortPreference = "manual" | "name-asc" | "memo-count-desc" | "updated-desc";
 export type MobileLocalePreference = "system" | "zh-CN" | "en-US";
+export type MobileResourceLayoutPreference = "grid" | "list";
 
 export const readMobileMemoListDensity = async (): Promise<MobileMemoListDensity> => {
   const value = await AsyncStorage.getItem(MEMO_LIST_DENSITY_KEY);
@@ -36,6 +38,13 @@ export const readMobileLocalePreference = async (): Promise<MobileLocalePreferen
 };
 
 export const writeMobileLocalePreference = (locale: MobileLocalePreference) => AsyncStorage.setItem(LOCALE_PREFERENCE_KEY, locale);
+
+export const readMobileResourceLayout = async (): Promise<MobileResourceLayoutPreference> => {
+  const value = await AsyncStorage.getItem(RESOURCE_LAYOUT_KEY);
+  return value === "list" ? "list" : "grid";
+};
+
+export const writeMobileResourceLayout = (layout: MobileResourceLayoutPreference) => AsyncStorage.setItem(RESOURCE_LAYOUT_KEY, layout);
 
 const isMobileNotebookSortPreference = (value: unknown): value is MobileNotebookSortPreference =>
   value === "manual" || value === "name-asc" || value === "memo-count-desc" || value === "updated-desc";

@@ -15,6 +15,7 @@ import {
   ExternalLink,
   FileText,
   Folder,
+  Grid,
   HardDrive,
   Heading2,
   History,
@@ -73,13 +74,16 @@ import {
   readMobileLocalePreference,
   readMobileMemoListDensity,
   readMobileNotebookSort,
+  readMobileResourceLayout,
   writeMobileImageCompressionEnabled,
   writeMobileLocalePreference,
   writeMobileMemoListDensity,
   writeMobileNotebookSort,
+  writeMobileResourceLayout,
   type MobileLocalePreference,
   type MobileMemoListDensity,
   type MobileNotebookSortPreference,
+  type MobileResourceLayoutPreference,
 } from "../lib/preferences";
 import { useSession } from "../lib/session";
 import {
@@ -2481,7 +2485,26 @@ const ResourcesModal = ({
   const queryClient = useQueryClient();
   const [searchText, setSearchText] = useState("");
   const [filter, setFilter] = useState<ResourceFilter>("all");
+  const [layout, setLayout] = useState<MobileResourceLayoutPreference>("grid");
   const [previewResource, setPreviewResource] = useState<ResourceListItem | null>(null);
+
+  useEffect(() => {
+    if (!visible) {
+      return;
+    }
+
+    let mounted = true;
+
+    readMobileResourceLayout().then((value) => {
+      if (mounted) {
+        setLayout(value);
+      }
+    });
+
+    return () => {
+      mounted = false;
+    };
+  }, [visible]);
 
   const resourcesQuery = useQuery({
     queryKey: ["mobile", "resources"],
@@ -2587,6 +2610,10 @@ const ResourcesModal = ({
       (resource.memoExcerpt || "").toLowerCase().includes(query)
     );
   });
+  const handleLayoutChange = (nextLayout: MobileResourceLayoutPreference) => {
+    setLayout(nextLayout);
+    void writeMobileResourceLayout(nextLayout);
+  };
 
   return (
     <Modal animationType="slide" onRequestClose={onClose} presentationStyle="pageSheet" visible={visible}>
@@ -2639,6 +2666,17 @@ const ResourcesModal = ({
             <OptionPill active={filter === "other"} label="其他" onPress={() => setFilter("other")} />
           </ScrollView>
 
+          <View style={styles.layoutToggle}>
+            <Pressable accessibilityRole="button" onPress={() => handleLayoutChange("grid")} style={[styles.layoutToggleButton, layout === "grid" && styles.layoutToggleButtonActive]}>
+              <Grid color={layout === "grid" ? "#047857" : "#64748b"} size={16} />
+              <Text style={[styles.layoutToggleText, layout === "grid" && styles.layoutToggleTextActive]}>网格</Text>
+            </Pressable>
+            <Pressable accessibilityRole="button" onPress={() => handleLayoutChange("list")} style={[styles.layoutToggleButton, layout === "list" && styles.layoutToggleButtonActive]}>
+              <List color={layout === "list" ? "#047857" : "#64748b"} size={16} />
+              <Text style={[styles.layoutToggleText, layout === "list" && styles.layoutToggleTextActive]}>列表</Text>
+            </Pressable>
+          </View>
+
           <Pressable
             disabled={!activeMemo || activeMemo.isDeleted || uploadResourceMutation.isPending}
             onPress={() => uploadResourceMutation.mutate()}
@@ -2670,10 +2708,13 @@ const ResourcesModal = ({
           </View>
         ) : (
           <FlatList
-            contentContainerStyle={styles.assetList}
+            columnWrapperStyle={layout === "grid" ? styles.assetGridRow : undefined}
+            contentContainerStyle={layout === "grid" ? styles.assetGrid : styles.assetList}
             data={filteredResources}
+            key={layout}
             keyExtractor={(resource) => resource.id}
-            renderItem={({ item }) => <ResourceCard resource={item} onOpen={() => openResource(item)} onPreview={() => setPreviewResource(item)} />}
+            numColumns={layout === "grid" ? 2 : 1}
+            renderItem={({ item }) => <ResourceCard layout={layout} resource={item} onOpen={() => openResource(item)} onPreview={() => setPreviewResource(item)} />}
             refreshControl={<RefreshControl onRefresh={() => resourcesQuery.refetch()} refreshing={resourcesQuery.isFetching} tintColor="#0f172a" />}
           />
         )}
@@ -2685,10 +2726,12 @@ const ResourcesModal = ({
 };
 
 const ResourceCard = ({
+  layout,
   onOpen,
   onPreview,
   resource,
 }: {
+  layout: MobileResourceLayoutPreference;
   onOpen: () => void;
   onPreview: () => void;
   resource: ResourceListItem;
@@ -2697,28 +2740,38 @@ const ResourceCard = ({
   const isImage = resource.kind === "image";
 
   return (
-    <Pressable onPress={isImage ? onPreview : onOpen} style={styles.resourceCard}>
-      <View style={styles.resourceThumb}>
+    <Pressable onPress={isImage ? onPreview : onOpen} style={layout === "grid" ? styles.resourceGridCard : styles.resourceCard}>
+      <View style={layout === "grid" ? styles.resourceGridThumb : styles.resourceThumb}>
         {isImage ? (
           <RNImage source={{ uri: resource.url }} style={styles.resourceImage} />
         ) : (
           <View style={styles.resourceFileIcon}>{getResourceIcon(resource)}</View>
         )}
       </View>
-      <View style={styles.resourceInfo}>
+      <View style={layout === "grid" ? styles.resourceGridInfo : styles.resourceInfo}>
         <Text numberOfLines={1} style={styles.memoTitle}>
           {resource.filename || resource.id}
         </Text>
-        <Text numberOfLines={1} style={styles.panelLabel}>
-          {formatBytes(resource.byteSize)} · {resource.mimeType?.split("/")[1] || resource.kind} · {formatDate(resource.createdAt)}
-        </Text>
-        <Text numberOfLines={1} style={styles.panelLabel}>
-          来源：{source}
-        </Text>
+        {layout === "grid" ? (
+          <Text numberOfLines={1} style={styles.panelLabel}>
+            {formatBytes(resource.byteSize)} · {resource.mimeType?.split("/")[1] || resource.kind}
+          </Text>
+        ) : (
+          <>
+            <Text numberOfLines={1} style={styles.panelLabel}>
+              {formatBytes(resource.byteSize)} · {resource.mimeType?.split("/")[1] || resource.kind} · {formatDate(resource.createdAt)}
+            </Text>
+            <Text numberOfLines={1} style={styles.panelLabel}>
+              来源：{source}
+            </Text>
+          </>
+        )}
       </View>
-      <Pressable onPress={onOpen} style={styles.secondaryIconButton}>
-        <ExternalLink color="#0f172a" size={16} />
-      </Pressable>
+      {layout === "list" ? (
+        <Pressable onPress={onOpen} style={styles.secondaryIconButton}>
+          <ExternalLink color="#0f172a" size={16} />
+        </Pressable>
+      ) : null}
     </Pressable>
   );
 };
@@ -4311,6 +4364,33 @@ const styles = StyleSheet.create({
     fontWeight: "700",
     lineHeight: 18,
   },
+  layoutToggle: {
+    alignSelf: "flex-start",
+    backgroundColor: "#f8fafc",
+    borderColor: "#e2e8f0",
+    borderRadius: 8,
+    borderWidth: 1,
+    flexDirection: "row",
+    overflow: "hidden",
+  },
+  layoutToggleButton: {
+    alignItems: "center",
+    flexDirection: "row",
+    gap: 6,
+    minHeight: 36,
+    paddingHorizontal: 10,
+  },
+  layoutToggleButtonActive: {
+    backgroundColor: "#ecfdf5",
+  },
+  layoutToggleText: {
+    color: "#64748b",
+    fontSize: 12,
+    fontWeight: "800",
+  },
+  layoutToggleTextActive: {
+    color: "#047857",
+  },
   uploadButton: {
     alignItems: "center",
     backgroundColor: "#047857",
@@ -4399,6 +4479,13 @@ const styles = StyleSheet.create({
   assetList: {
     padding: 18,
     paddingBottom: 48,
+  },
+  assetGrid: {
+    padding: 12,
+    paddingBottom: 48,
+  },
+  assetGridRow: {
+    gap: 10,
   },
   emptyList: {
     flexGrow: 1,
@@ -4497,6 +4584,17 @@ const styles = StyleSheet.create({
     marginBottom: 10,
     padding: 10,
   },
+  resourceGridCard: {
+    backgroundColor: "#ffffff",
+    borderColor: "#e2e8f0",
+    borderRadius: 8,
+    borderWidth: 1,
+    flex: 1,
+    gap: 8,
+    marginBottom: 10,
+    minWidth: 0,
+    overflow: "hidden",
+  },
   resourceThumb: {
     alignItems: "center",
     backgroundColor: "#f8fafc",
@@ -4507,6 +4605,16 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     overflow: "hidden",
     width: 58,
+  },
+  resourceGridThumb: {
+    alignItems: "center",
+    aspectRatio: 1.18,
+    backgroundColor: "#f8fafc",
+    borderBottomColor: "#e2e8f0",
+    borderBottomWidth: 1,
+    justifyContent: "center",
+    overflow: "hidden",
+    width: "100%",
   },
   resourceImage: {
     height: "100%",
@@ -4520,6 +4628,11 @@ const styles = StyleSheet.create({
     flex: 1,
     gap: 4,
     minWidth: 0,
+  },
+  resourceGridInfo: {
+    gap: 5,
+    minWidth: 0,
+    padding: 10,
   },
   centerState: {
     alignItems: "center",
