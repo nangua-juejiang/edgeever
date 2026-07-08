@@ -1581,7 +1581,18 @@ const RichEditorPane = ({
       setMobilePlainTextElementValue(mobileTextAreaRef.current, nextMarkdown);
 
       if (isEditorReady(currentEditor)) {
-        currentEditor.commands.setContent(nextContent);
+        const editorJson = currentEditor.getJSON() as TiptapDoc;
+        const nextJsonString = JSON.stringify(nextContent);
+        const editorJsonString = JSON.stringify(editorJson);
+
+        if (editorJsonString !== nextJsonString) {
+          const { from, to } = currentEditor.state.selection;
+          currentEditor.commands.setContent(nextContent);
+          const docSize = currentEditor.state.doc.content.size;
+          if (from <= docSize && to <= docSize) {
+            currentEditor.commands.setTextSelection({ from, to });
+          }
+        }
       }
 
       window.setTimeout(() => {

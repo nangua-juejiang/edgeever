@@ -15,16 +15,28 @@ if (!["doctor", "setup"].includes(command)) {
 
 const envPath = resolve(".env.local");
 const envExamplePath = resolve(".env.local.example");
-const localWrangler = resolve(
-  "node_modules",
-  ".bin",
-  process.platform === "win32" ? "wrangler.cmd" : "wrangler",
-);
-const wrangler = existsSync(localWrangler)
-  ? localWrangler
-  : process.platform === "win32"
-    ? "wrangler.cmd"
-    : "wrangler";
+const resolveLocalWrangler = () => {
+  const binDir = resolve("node_modules", ".bin");
+
+  if (process.platform === "win32") {
+    const exePath = resolve(binDir, "wrangler.exe");
+    if (existsSync(exePath)) {
+      return exePath;
+    }
+
+    const cmdPath = resolve(binDir, "wrangler.cmd");
+    if (existsSync(cmdPath)) {
+      return cmdPath;
+    }
+
+    return "";
+  }
+
+  return resolve(binDir, "wrangler");
+};
+
+const localWrangler = resolveLocalWrangler();
+const wrangler = localWrangler || (process.platform === "win32" ? "wrangler.cmd" : "wrangler");
 
 const parseEnv = (content) => {
   const values = new Map();

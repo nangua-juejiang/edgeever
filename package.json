@@ -84,6 +84,7 @@
     "zod": "latest"
   },
   "devDependencies": {
+    "@babel/plugin-bugfix-safari-id-destructuring-collision-in-function-expression": "^8.0.1",
     "@cloudflare/workers-types": "latest",
     "@types/marked": "^6.0.0",
     "@types/node": "latest",
