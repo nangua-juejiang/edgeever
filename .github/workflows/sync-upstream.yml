@@ -17,16 +17,35 @@ jobs:
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
           ref: main
+          # 必须拉取完整历史，否则 merge 时找不到共同祖先会报
+          # "refusing to merge unrelated histories"（浅克隆只有 1 层 commit）
+          fetch-depth: 0
+
+      - name: Configure git identity
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
       - name: Add upstream remote
         run: git remote add upstream https://github.com/tianma-if/edgeever.git
 
       - name: Fetch upstream
-        run: git fetch upstream
+        run: git fetch upstream main
 
       - name: Merge upstream/main into main
+        id: merge
         run: |
+          set +e
           git merge upstream/main --no-edit
+          status=$?
+          if [ $status -ne 0 ]; then
+            echo "::warning::Merge failed (likely conflicts). Aborting to avoid leaving a half-merged state."
+            git merge --abort
+            echo "need_manual=true" >> $GITHUB_OUTPUT
+            exit 1
+          fi
+          echo "need_manual=false" >> $GITHUB_OUTPUT
 
       - name: Push merged changes
+        if: steps.merge.outcome == 'success'
         run: git push origin main
