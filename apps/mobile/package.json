@@ -1,0 +1,44 @@
+{
+  "name": "@edgeever/mobile",
+  "version": "0.1.3",
+  "private": true,
+  "type": "module",
+  "main": "expo-router/entry",
+  "scripts": {
+    "dev": "expo start",
+    "android": "expo start --android",
+    "ios": "expo start --ios",
+    "web": "expo start --web",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@edgeever/client": "workspace:*",
+    "@edgeever/shared": "workspace:*",
+    "@gorhom/bottom-sheet": "latest",
+    "@react-native-async-storage/async-storage": "2.2.0",
+    "@tanstack/react-query": "latest",
+    "expo": "latest",
+    "expo-clipboard": "~57.0.0",
+    "expo-constants": "~57.0.3",
+    "expo-document-picker": "~57.0.0",
+    "expo-image-manipulator": "~57.0.2",
+    "expo-router": "latest",
+    "expo-secure-store": "latest",
+    "expo-status-bar": "latest",
+    "lucide-react-native": "latest",
+    "react": "19.2.3",
+    "react-native": "latest",
+    "react-native-gesture-handler": "~2.32.0",
+    "react-native-reanimated": "4.5.0",
+    "react-native-safe-area-context": "~5.7.0",
+    "react-native-screens": "latest",
+    "react-native-svg": "15.15.4",
+    "react-native-webview": "13.16.1"
+  },
+  "devDependencies": {
+    "@types/react": "latest",
+    "babel-preset-expo": "latest",
+    "gluestack-ui": "latest",
+    "typescript": "6.0.3"
+  }
+}

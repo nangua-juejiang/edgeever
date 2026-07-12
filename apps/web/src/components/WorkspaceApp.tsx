@@ -27,6 +27,7 @@ import {
 import { MemoListPane, MemoSelectionActionBar } from "./MemoListPane";
 import { AppConfirmDialog, MemoDeleteConfirmDialog, NotebookNameDialog } from "./dialogs/ConfirmDialogs";
 import { api } from "@/lib/api";
+import { MOBILE_EDITOR_RETURN_PARAM, openStandaloneMobileEditor } from "@/lib/mobile-editor";
 import { cn } from "@/lib/utils";
 import { createExcerpt, docToText, type Notebook, type AuthUser, type MemoSummary, type MemoDetail } from "@edgeever/shared";
 import type {
@@ -79,14 +80,6 @@ const isStandaloneApp = () =>
   window.matchMedia("(display-mode: fullscreen)").matches ||
   Boolean((navigator as Navigator & { standalone?: boolean }).standalone);
 
-const openStandaloneMobileEditor = (memoId: string) => {
-  const params = new URLSearchParams({
-    memoId,
-    returnTo: "/",
-  });
-  window.location.href = `/mobile-edit.html#${params.toString()}`;
-};
-
 const getVerticalScrollContainer = (target: EventTarget | null) => {
   let element = target instanceof HTMLElement ? target : null;
 
@@ -115,6 +108,7 @@ const TagsDialog = lazy(() => import("./dialogs/TagsDialog").then((module) => ({
 const TemplatesDialog = lazy(() => import("./dialogs/TemplatesDialog").then((module) => ({ default: module.TemplatesDialog })));
 
 const SETTINGS_PATH = "/settings";
+const getMobileEditorReturnMemoId = (search: string) => new URLSearchParams(search).get(MOBILE_EDITOR_RETURN_PARAM);
 const emptySyncQueueSummary = (): SyncQueueSummary => ({
   total: 0,
   pending: 0,
@@ -231,6 +225,25 @@ const sortMemoSummariesForList = (memos: MemoSummary[], queryKey: readonly unkno
   });
 };
 
+const reflowMemoListPages = (current: MemoListQueryData, memos: MemoSummary[], totalCount: number) => {
+  let offset = 0;
+
+  return {
+    ...current,
+    pages: current.pages.map((page) => {
+      const pageSize = page.memos.length;
+      const nextPageMemos = memos.slice(offset, offset + pageSize);
+      offset += pageSize;
+
+      return {
+        ...page,
+        memos: nextPageMemos,
+        totalCount,
+      };
+    }),
+  };
+};
+
 const updateMemoSummaryInLists = (queryClient: QueryClient, memo: MemoDetail) => {
   const summary = memoToSummary(memo);
 
@@ -239,24 +252,23 @@ const updateMemoSummaryInLists = (queryClient: QueryClient, memo: MemoDetail) =>
       continue;
     }
 
-    let changed = false;
-    const pages = current.pages.map((page) => {
-      let pageChanged = false;
-      const memos = page.memos.map((item) => {
-        if (item.id !== summary.id) {
-          return item;
-        }
+    const flatMemos = current.pages.flatMap((page) => page.memos);
+    const existingIndex = flatMemos.findIndex((item) => item.id === summary.id);
+    const belongsInList = memoBelongsInList(summary, queryKey);
+    const currentTotalCount = current.pages[0]?.totalCount ?? flatMemos.length;
 
-        changed = true;
-        pageChanged = true;
-        return { ...item, ...summary };
-      });
+    if (existingIndex >= 0) {
+      const nextMemos = belongsInList
+        ? flatMemos.map((item) => (item.id === summary.id ? { ...item, ...summary } : item))
+        : flatMemos.filter((item) => item.id !== summary.id);
+      const totalCount = belongsInList ? currentTotalCount : Math.max(0, currentTotalCount - 1);
 
-      return pageChanged ? { ...page, memos } : page;
-    });
+      queryClient.setQueryData(queryKey, reflowMemoListPages(current, sortMemoSummariesForList(nextMemos, queryKey), totalCount));
+      continue;
+    }
 
-    if (!changed && memoBelongsInList(summary, queryKey)) {
-      const [firstPage, ...restPages] = pages;
+    if (belongsInList) {
+      const [firstPage, ...restPages] = current.pages;
       const nextFirstPage = firstPage
         ? {
             ...firstPage,
@@ -266,11 +278,6 @@ const updateMemoSummaryInLists = (queryClient: QueryClient, memo: MemoDetail) =>
         : { memos: [summary], totalCount: 1, nextCursor: null };
 
       queryClient.setQueryData(queryKey, { ...current, pages: [nextFirstPage, ...restPages] });
-      continue;
-    }
-
-    if (changed) {
-      queryClient.setQueryData(queryKey, { ...current, pages });
     }
   }
 };
@@ -731,7 +738,8 @@ export const WorkspaceApp = ({
   const location = useLocation();
   const navigate = useNavigate();
   const isInitialSettingsRoute = location.pathname === SETTINGS_PATH;
-  const [activePane, setActivePane] = useState<Pane>(() => (isInitialSettingsRoute ? "editor" : "memos"));
+  const isInitialMobileEditorReturn = Boolean(getMobileEditorReturnMemoId(location.search));
+  const [activePane, setActivePane] = useState<Pane>(() => (isInitialSettingsRoute && !isInitialMobileEditorReturn ? "editor" : "memos"));
   const [memoView, setMemoView] = useState<MemoView>("notebook");
   const [selectedNotebookId, setSelectedNotebookId] = useState<string | null>(null);
   const [selectedMemoId, setSelectedMemoId] = useState<string | null>(null);
@@ -754,7 +762,7 @@ export const WorkspaceApp = ({
   const [templatesOpen, setTemplatesOpen] = useState(false);
   const [mobileNotebookPickerOpen, setMobileNotebookPickerOpen] = useState(false);
   const [mobileBottomNavActive, setMobileBottomNavActive] = useState<MobileBottomNavItem>(() =>
-    isInitialSettingsRoute ? "settings" : "home"
+    isInitialSettingsRoute && !isInitialMobileEditorReturn ? "settings" : "home"
   );
   const [mobileSearchFocusToken, setMobileSearchFocusToken] = useState(0);
   const [noteSearchFocusToken, setNoteSearchFocusToken] = useState(0);
@@ -767,6 +775,7 @@ export const WorkspaceApp = ({
   const [isOnline, setIsOnline] = useState(() => (typeof navigator === "undefined" ? true : navigator.onLine));
   const [isDesktop, setIsDesktop] = useState(isDesktopViewport);
   const [isSyncingQueuedChanges, setIsSyncingQueuedChanges] = useState(false);
+  const [isManualMemoSyncing, setIsManualMemoSyncing] = useState(false);
   const [isStandaloneRuntime] = useState(isStandaloneApp);
   const [pullToRefreshDistance, setPullToRefreshDistance] = useState(0);
   const [isPullRefreshing, setIsPullRefreshing] = useState(false);
@@ -837,12 +846,35 @@ export const WorkspaceApp = ({
     }
   }, [queryClient]);
 
+  const syncMemosManually = useCallback(async () => {
+    if (typeof navigator !== "undefined" && !navigator.onLine) {
+      setIsOnline(false);
+      return;
+    }
+
+    setIsManualMemoSyncing(true);
+
+    try {
+      await runQueuedSync();
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["memos"] }),
+        queryClient.invalidateQueries({ queryKey: ["memo"] }),
+        queryClient.invalidateQueries({ queryKey: ["notebooks"] }),
+        queryClient.invalidateQueries({ queryKey: ["resources"], refetchType: "all" }),
+      ]);
+    } finally {
+      setIsManualMemoSyncing(false);
+    }
+  }, [queryClient, runQueuedSync]);
+
   const notebooksQuery = useQuery({
     queryKey: ["notebooks"],
     queryFn: () => api.listNotebooks(),
   });
 
   const notebooks = notebooksQuery.data?.notebooks ?? [];
+  const mobileEditorReturnMemoId = getMobileEditorReturnMemoId(location.search);
+  const visibleActivePane: Pane = mobileEditorReturnMemoId ? "memos" : activePane;
   const defaultMemoNotebookId =
     notebooks.find(
       (notebook) => notebook.id === "nb_inbox" || notebook.slug === "inbox" || notebook.name === "等待分类"
@@ -865,12 +897,12 @@ export const WorkspaceApp = ({
       rightView !== "editor" ||
       tagsOpen ||
       memoSelectionModeActive ||
-      activePane === "editor" ||
-      activePane === "notebooks"
+      visibleActivePane === "editor" ||
+      visibleActivePane === "notebooks"
   );
   const mobilePullToRefreshActive = Boolean(
     !isDesktop &&
-      activePane === "memos" &&
+      visibleActivePane === "memos" &&
       !appNoticeDialog &&
       !notebookDeleteConfirmation &&
       !notebookNameDialog &&
@@ -890,6 +922,25 @@ export const WorkspaceApp = ({
   }, []);
 
   const clearPendingCreatedMemo = useCallback(() => {}, []);
+
+  useEffect(() => {
+    const returnedMemoId = getMobileEditorReturnMemoId(location.search);
+    if (!returnedMemoId) {
+      return;
+    }
+
+    skipNextHomeRouteSyncRef.current = false;
+    setRightView("editor");
+    setMobileBottomNavActive("home");
+    setActivePane("memos");
+    setSelectedMemoId(null);
+    setCreatedMemoEditId(null);
+    clearMemoSelection();
+
+    if (location.pathname !== "/" || location.search) {
+      navigate("/", { replace: true });
+    }
+  }, [clearMemoSelection, location.pathname, location.search, navigate]);
 
   const replaceMemoSelection = useCallback((memoIds: string[]) => {
     setSelectedMemoIds(new Set(memoIds));
@@ -1539,7 +1590,7 @@ export const WorkspaceApp = ({
   };
 
   const handleDeleteNotebook = (notebook: Notebook) => {
-    if (notebook.slug === "inbox") {
+    if (notebook.id === "nb_inbox" || notebook.slug === "inbox" || notebook.name === "等待分类") {
       setAppNoticeDialog({
         title: t("workspace.inboxDeleteTitle"),
         description: t("workspace.inboxDeleteDescription"),
@@ -1992,7 +2043,7 @@ export const WorkspaceApp = ({
       return true;
     }
 
-    if (activePane === "editor" || activePane === "notebooks") {
+    if (visibleActivePane === "editor" || visibleActivePane === "notebooks") {
       clearPendingCreatedMemo();
       setActivePane("memos");
       return true;
@@ -2000,7 +2051,7 @@ export const WorkspaceApp = ({
 
     return false;
   }, [
-    activePane,
+    visibleActivePane,
     appNoticeDialog,
     rightView,
     clearMemoSelection,
@@ -2219,7 +2270,7 @@ export const WorkspaceApp = ({
     updateMemoListWidth(nextWidth);
   };
 
-  const shouldRenderRightPane = isDesktop || activePane === "editor";
+  const shouldRenderRightPane = isDesktop || visibleActivePane === "editor";
   const rightPaneLoadingLabel =
     rightView === "settings"
       ? t("workspace.loading.settings")
@@ -2269,10 +2320,10 @@ export const WorkspaceApp = ({
           <aside
             className={cn(
               "min-h-0 border-r border-slate-200 bg-white/75 backdrop-blur-lg lg:block",
-              activePane === "notebooks" ? "block" : "hidden"
+              visibleActivePane === "notebooks" ? "block" : "hidden"
             )}
           >
-            {(isDesktop || activePane === "notebooks") && (
+            {(isDesktop || visibleActivePane === "notebooks") && (
               <Suspense fallback={<PaneLoadingFallback label={t("workspace.loading.notebooks")} />}>
                 <NotebookPane
                   authRequired={authRequired}
@@ -2335,8 +2386,8 @@ export const WorkspaceApp = ({
             className={cn(
               "relative min-w-0 overflow-hidden border-r border-slate-200 bg-slate-50",
               rightView === "editor"
-                ? (activePane === "memos" ? "block lg:block lg:bg-white/75 lg:backdrop-blur-lg" : "hidden lg:block lg:bg-white/75 lg:backdrop-blur-lg")
-                : (activePane === "memos" ? "block lg:hidden" : "hidden lg:hidden")
+                ? (visibleActivePane === "memos" ? "block lg:block lg:bg-white/75 lg:backdrop-blur-lg" : "hidden lg:block lg:bg-white/75 lg:backdrop-blur-lg")
+                : (visibleActivePane === "memos" ? "block lg:hidden" : "hidden lg:hidden")
             )}
           >
             <MemoListPane
@@ -2379,6 +2430,9 @@ export const WorkspaceApp = ({
               onOpenAssets={handleOpenAssets}
               onOpenTags={handleOpenTags}
               onOpenSettings={handleOpenSettings}
+              onSyncMemos={() => void syncMemosManually()}
+              isSyncingMemos={isManualMemoSyncing || isSyncingQueuedChanges || isPullRefreshing || memosQuery.isRefetching}
+              canSyncMemos={isOnline}
               onOpenTrash={() => {
                 navigateWorkspaceHome();
                 setMemoView("trash");
@@ -2449,7 +2503,7 @@ export const WorkspaceApp = ({
             />
           </section>
 
-          <section className={cn("min-h-0 min-w-0 bg-white lg:block", activePane === "editor" ? "block" : "hidden")}>
+          <section className={cn("min-h-0 min-w-0 bg-white lg:block", visibleActivePane === "editor" ? "block" : "hidden")}>
             {shouldRenderRightPane && (
               <Suspense fallback={<PaneLoadingFallback label={rightPaneLoadingLabel} />}>
                 {rightView === "settings" ? (
@@ -2596,7 +2650,7 @@ export const WorkspaceApp = ({
           onConfirm={() => setAppNoticeDialog(null)}
         />
       )}
-      {activePane !== "editor" && !memoSelectionModeActive && (
+      {visibleActivePane !== "editor" && !memoSelectionModeActive && (
         <MobileBottomNav
           activeItem={mobileBottomNavActive}
           canCreateMemo={canCreateMemo && memoView !== "trash"}

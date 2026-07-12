@@ -28,6 +28,7 @@ import {
   FileText as FileIcon,
   Star,
   RotateCcw,
+  RefreshCw,
   Folder,
   Merge,
   FilePlus2,
@@ -354,7 +355,10 @@ export const MemoListPane = ({
   onOpenAssets,
   onOpenTrash,
   onOpenSettings,
+  onSyncMemos,
   onCreateMemo,
+  isSyncingMemos,
+  canSyncMemos,
   mobileListActionsOpen,
   setMobileListActionsOpen,
   mobileMoveOpen,
@@ -422,7 +426,10 @@ export const MemoListPane = ({
   onOpenAssets: () => void;
   onOpenTrash: () => void;
   onOpenSettings: () => void;
+  onSyncMemos: () => void;
   onCreateMemo: () => void;
+  isSyncingMemos: boolean;
+  canSyncMemos: boolean;
   mobileListActionsOpen: boolean;
   setMobileListActionsOpen: (open: boolean) => void;
   mobileMoveOpen: boolean;
@@ -504,6 +511,11 @@ export const MemoListPane = ({
   const hasListConstraint = Boolean(search.trim()) || filterMode !== "all";
   const activeFilterLabel = filterOptions.find((option) => option.value === filterMode)?.label ?? t("options.memoFilter.all");
   const activeSortLabel = memoSortOptions.find((option) => option.value === sortMode)?.label ?? t("options.memoSort.updatedDesc");
+  const syncMemosTitle = !canSyncMemos
+    ? t("memoList.manualSyncOffline")
+    : isSyncingMemos
+      ? t("memoList.manualSyncing")
+      : t("memoList.manualSync");
 
   useEffect(() => {
     if (notebook?.id) {
@@ -718,7 +730,10 @@ export const MemoListPane = ({
 
   const openMemoContextMenuAt = (memo: MemoSummary, clientX: number, clientY: number) => {
     const menuWidth = 224;
-    const menuHeight = view === "trash" ? 160 : 260;
+    // Keep enough room for the full action list. Radix can still adjust the
+    // final position, but this prevents the initial placement from starting
+    // below the viewport on short or zoomed desktop viewports.
+    const menuHeight = view === "trash" ? 180 : 320;
     const x = Math.min(clientX, Math.max(12, window.innerWidth - menuWidth - 12));
     const y = Math.min(clientY, Math.max(12, window.innerHeight - menuHeight - 12));
 
@@ -1000,8 +1015,8 @@ export const MemoListPane = ({
           </div>
         </div>
 
-        <div className="mb-3 hidden items-center justify-between gap-2 lg:flex">
-          <div className="flex min-w-0 items-center gap-1">
+        <div className="mb-3 hidden flex-wrap items-center justify-between gap-2 lg:flex">
+          <div className="flex min-w-0 flex-wrap items-center gap-1">
             <Button
               size="icon"
               variant="ghost"
@@ -1099,6 +1114,16 @@ export const MemoListPane = ({
             </ToggleGroup>
           </div>
           <div className="flex shrink-0 items-center gap-1">
+            <Button
+              size="icon"
+              variant="ghost"
+              title={syncMemosTitle}
+              aria-label={syncMemosTitle}
+              disabled={!canSyncMemos || isSyncingMemos}
+              onClick={onSyncMemos}
+            >
+              <RefreshCw className={cn("h-4 w-4", isSyncingMemos && "animate-spin")} />
+            </Button>
             {view === "trash" && (
               <Button
                 size="sm"
@@ -1235,7 +1260,7 @@ export const MemoListPane = ({
 
       <div
         ref={listScrollRef}
-        className="relative min-h-0 flex-1 overflow-y-auto p-3 pb-[calc(7rem+env(safe-area-inset-bottom))] lg:pb-3"
+        className="relative min-h-0 flex-1 overflow-y-auto p-3 pb-[calc(7rem+env(safe-area-inset-bottom))] lg:pb-3 lg:pr-0"
       >
         {isLoading || (isRefreshing && memos.length === 0) ? (
           <div className="px-2 py-4 text-sm text-slate-500">{t("memoList.fetchingLatest")}</div>
@@ -1310,7 +1335,10 @@ export const MemoListPane = ({
             <DropdownMenuTrigger asChild>
               <span className="sr-only" />
             </DropdownMenuTrigger>
-            <DropdownMenuContent align="start" className="w-56 bg-white border border-slate-200 rounded-md py-1 shadow-md">
+            <DropdownMenuContent
+              align="start"
+              className="max-h-[calc(100dvh-1.5rem)] w-56 max-w-[calc(100vw-1.5rem)] overflow-y-auto bg-white border border-slate-200 rounded-md py-1 shadow-md"
+            >
               <DropdownMenuItem
                 className="flex h-9 w-full items-center gap-2 px-3 text-left text-sm text-slate-700 hover:bg-slate-50 cursor-pointer outline-none"
                 onClick={() => {

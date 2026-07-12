@@ -35,7 +35,11 @@ const loadLocalEnv = () => {
       value = value.slice(1, -1);
     }
 
-    if (key && process.env[key] === undefined) {
+    // Bun expands $ references while auto-loading .env files. Values written
+    // by the deployment script escape literal dollars as \$.
+    value = value.replace(/\\\$/g, "$");
+
+    if (key) {
       process.env[key] = value;
     }
   }
@@ -221,6 +225,26 @@ const result = spawnSync(executable, ["--config", configPath, ...finalWranglerAr
   stdio: "inherit",
   shell: process.platform === "win32",
 });
+
+if (result.status === 0 && isDeployCommand && authPasswordHash) {
+  const secretResult = spawnSync(
+    executable,
+    ["--config", configPath, "secret", "put", "EDGE_EVER_AUTH_PASSWORD_HASH"],
+    {
+      input: authPasswordHash,
+      stdio: ["pipe", "inherit", "inherit"],
+      shell: process.platform === "win32",
+    },
+  );
+
+  if (secretResult.error) {
+    throw secretResult.error;
+  }
+
+  if (secretResult.status !== 0) {
+    process.exit(secretResult.status ?? 1);
+  }
+}
 
 if (result.error) {
   console.error(result.error.message);

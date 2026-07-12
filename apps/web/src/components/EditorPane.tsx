@@ -2,8 +2,10 @@ import { useRef, useState, useEffect, useCallback, useMemo, type PointerEvent as
 import { useQueryClient, useMutation } from "@tanstack/react-query";
 import { NodeViewWrapper, ReactNodeViewRenderer, useEditor, EditorContent, type Editor, type NodeViewProps } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
+import CodeBlockLowlight from "@tiptap/extension-code-block-lowlight";
 import Image from "@tiptap/extension-image";
 import Placeholder from "@tiptap/extension-placeholder";
+import { useTranslation } from "react-i18next";
 import {
   ChevronLeft,
   ChevronRight,
@@ -48,10 +50,13 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from "@/components/ui/select";
 import { EditorToolbar } from "./EditorToolbar";
+import { ThemeToggle } from "./ThemeToggle";
 import { RevisionHistoryDialog } from "./dialogs/RevisionHistoryDialog";
 import { api } from "@/lib/api";
+import { consumeStandaloneMobileEditorReturn, openStandaloneMobileEditor } from "@/lib/mobile-editor";
 import { cn, formatDateTime, parseTagsText } from "@/lib/utils";
-import { docToMarkdown, markdownToDoc, type Notebook, type MemoDetail, type TiptapDoc } from "@edgeever/shared";
+import { docToMarkdown, markdownToDoc, type Notebook, type MemoDetail, type MemoEditSession, type TiptapDoc } from "@edgeever/shared";
+import { codeBlockLowlight } from "@/lib/code-block";
 import { compressImageForUpload } from "@/lib/image-compression";
 import { localDb, type MemoUpdateSyncPayload } from "@/lib/local-db";
 import { getMemoUpdateQueueId, queueMemoUpdate, shouldQueueMemoSaveError } from "@/lib/sync-queue";
@@ -67,7 +72,12 @@ const MOBILE_DRAFT_PERSIST_DELAY_MS = 800;
 const DEFAULT_IMAGE_WIDTH_PERCENT = 72;
 const MIN_IMAGE_WIDTH_PERCENT = 25;
 const MAX_IMAGE_WIDTH_PERCENT = 100;
-const IMAGE_WIDTH_PRESETS = [35, 50, 72, 100];
+const IMAGE_WIDTH_PRESETS = [
+  { width: 35, labelKey: "editor.imageSizeSmall" },
+  { width: 50, labelKey: "editor.imageSizeMedium" },
+  { width: 72, labelKey: "editor.imageSizeLarge" },
+  { width: 100, labelKey: "editor.imageSizeFull" },
+] as const;
 
 type NoteSearchMatch = {
   from: number;
@@ -233,8 +243,11 @@ const parseImageWidth = (value: unknown) => {
 };
 
 const ResizableImageNodeView = ({ editor, node, selected, updateAttributes }: NodeViewProps) => {
+  const { t } = useTranslation();
   const wrapperRef = useRef<HTMLDivElement | null>(null);
-  const width = parseImageWidth(node.attrs.width) ?? DEFAULT_IMAGE_WIDTH_PERCENT;
+  const [previewWidth, setPreviewWidth] = useState<number | null>(null);
+  const nodeWidth = parseImageWidth(node.attrs.width) ?? DEFAULT_IMAGE_WIDTH_PERCENT;
+  const width = previewWidth ?? nodeWidth;
   const editable = editor.isEditable;
   const alt = typeof node.attrs.alt === "string" ? node.attrs.alt : "";
   const title = typeof node.attrs.title === "string" ? node.attrs.title : "";
@@ -267,24 +280,32 @@ const ResizableImageNodeView = ({ editor, node, selected, updateAttributes }: No
         return;
       }
 
-      const updateFromPointer = (clientX: number) => {
+      let pendingWidth = nodeWidth;
+      const previewFromPointer = (clientX: number) => {
         const wrapperLeft = wrapper.getBoundingClientRect().left;
-        updateWidth(((clientX - wrapperLeft) / parentWidth) * 100);
+        pendingWidth = clampImageWidth(((clientX - wrapperLeft) / parentWidth) * 100);
+        setPreviewWidth(pendingWidth);
       };
 
-      const handlePointerMove = (moveEvent: PointerEvent) => updateFromPointer(moveEvent.clientX);
-      const stopResize = () => {
+      const handlePointerMove = (moveEvent: PointerEvent) => previewFromPointer(moveEvent.clientX);
+      const stopResize = (commit: boolean) => {
         window.removeEventListener("pointermove", handlePointerMove);
-        window.removeEventListener("pointerup", stopResize);
-        window.removeEventListener("pointercancel", stopResize);
+        window.removeEventListener("pointerup", handlePointerUp);
+        window.removeEventListener("pointercancel", handlePointerCancel);
+        setPreviewWidth(null);
+        if (commit && pendingWidth !== nodeWidth) {
+          updateWidth(pendingWidth);
+        }
       };
+      const handlePointerUp = () => stopResize(true);
+      const handlePointerCancel = () => stopResize(false);
 
       window.addEventListener("pointermove", handlePointerMove);
-      window.addEventListener("pointerup", stopResize);
-      window.addEventListener("pointercancel", stopResize);
-      updateFromPointer(event.clientX);
+      window.addEventListener("pointerup", handlePointerUp);
+      window.addEventListener("pointercancel", handlePointerCancel);
+      previewFromPointer(event.clientX);
     },
-    [editable, updateWidth]
+    [editable, nodeWidth, updateWidth]
   );
 
   return (
@@ -298,25 +319,26 @@ const ResizableImageNodeView = ({ editor, node, selected, updateAttributes }: No
       <img src={src} alt={alt} title={title || undefined} draggable={false} />
       {editable && selected && (
         <div className="edgeever-image-controls" contentEditable={false}>
-          <div className="edgeever-image-presets" aria-label="图片缩放">
+          <div className="edgeever-image-presets" aria-label={t("editor.imageScale")}>
             {IMAGE_WIDTH_PRESETS.map((preset) => (
               <button
-                key={preset}
+                key={preset.width}
                 type="button"
-                className={cn("edgeever-image-preset", width === preset && "is-active")}
-                title={`缩放到 ${preset}%`}
-                aria-label={`缩放到 ${preset}%`}
-                onClick={() => updateWidth(preset)}
+                className={cn("edgeever-image-preset", width === preset.width && "is-active")}
+                title={t("editor.scaleTo", { percent: preset.width })}
+                aria-label={`${t(preset.labelKey)}，${t("editor.scaleTo", { percent: preset.width })}`}
+                onClick={() => updateWidth(preset.width)}
               >
-                {preset}
+                <span>{t(preset.labelKey)}</span>
+                <span className="edgeever-image-preset-percent">{preset.width}%</span>
               </button>
             ))}
           </div>
           <button
             type="button"
             className="edgeever-image-resize-handle"
-            title="拖拽调整图片宽度"
-            aria-label="拖拽调整图片宽度"
+            title={t("editor.resizeImage")}
+            aria-label={t("editor.resizeImage")}
             onPointerDown={startResize}
           />
         </div>
@@ -467,14 +489,6 @@ type RichEditorPaneProps = EditorPaneProps & {
   onRequestMobileNativeEdit?: () => void;
 };
 
-const openStandaloneMobileEditor = (memoId: string) => {
-  const params = new URLSearchParams({
-    memoId,
-    returnTo: "/",
-  });
-  window.location.href = `/mobile-edit.html#${params.toString()}`;
-};
-
 const MobileNativeEditorPane = ({
   memo,
   notebooks,
@@ -490,6 +504,7 @@ const MobileNativeEditorPane = ({
   const draftTimerRef = useRef<number | null>(null);
   const saveTimerRef = useRef<number | null>(null);
   const memoRef = useRef<MemoDetail | null>(memo);
+  const editSessionRef = useRef<MemoEditSession | null>(null);
   const editingMemoIdRef = useRef<string | null>(memo?.id ?? null);
   const hasUnsavedChangesRef = useRef(false);
   const hydratingRef = useRef(false);
@@ -551,7 +566,8 @@ const MobileNativeEditorPane = ({
     const currentMemo = memoRef.current;
     const snapshot = currentSnapshot();
 
-    if (!currentMemo || currentMemo.isDeleted || !snapshot || savingRef.current) {
+    const editSession = editSessionRef.current;
+    if (!currentMemo || currentMemo.isDeleted || !snapshot || savingRef.current || !editSession) {
       return false;
     }
 
@@ -563,6 +579,8 @@ const MobileNativeEditorPane = ({
     const payload: MemoUpdateSyncPayload = {
       memoId: currentMemo.id,
       expectedRevision: currentMemo.revision,
+      expectedContentHash: currentMemo.contentHash,
+      editSessionId: editSession.id,
       title: getTitleValue(),
       contentJson,
       tags: parseTagsText(getTagsValue()),
@@ -571,12 +589,19 @@ const MobileNativeEditorPane = ({
     try {
       const data = await api.updateMemo(currentMemo.id, {
         expectedRevision: payload.expectedRevision,
+        expectedContentHash: payload.expectedContentHash,
+        editSessionId: payload.editSessionId,
         title: payload.title,
         contentJson: payload.contentJson,
         tags: payload.tags,
       });
 
       memoRef.current = data.memo;
+      editSessionRef.current = {
+        ...editSession,
+        baseRevision: data.memo.revision,
+        baseContentHash: data.memo.contentHash,
+      };
       await onSaved(data.memo);
 
       if (currentSnapshot() === snapshot) {
@@ -679,6 +704,7 @@ const MobileNativeEditorPane = ({
   useEffect(() => {
     if (!memo) {
       memoRef.current = null;
+      editSessionRef.current = null;
       return;
     }
 
@@ -691,11 +717,12 @@ const MobileNativeEditorPane = ({
     }
 
     void (async () => {
-      const [draft, queuedUpdate] = memo.isDeleted
-        ? [null, null]
+      const [draft, queuedUpdate, editSessionResponse] = memo.isDeleted
+        ? [null, null, null]
         : await Promise.all([
             localDb.drafts.get(memo.id),
             localDb.syncQueue.get(getMemoUpdateQueueId(memo.id)),
+            api.createMemoEditSession(memo.id),
           ]);
 
       if (cancelled) {
@@ -708,6 +735,7 @@ const MobileNativeEditorPane = ({
       const nextTitle = useDraft && draft ? draft.title : memo.title ?? "";
       const nextTagsText = useDraft && draft ? draft.tagsText : memo.tags.join(", ");
       const nextContent = useDraft && draft ? draft.contentJson : memo.contentJson;
+      editSessionRef.current = editSessionResponse?.editSession ?? null;
 
       hydratingRef.current = true;
       editingMemoIdRef.current = memo.id;
@@ -942,6 +970,7 @@ export const EditorPane = (props: EditorPaneProps) => {
     typeof window === "undefined" ? false : window.matchMedia(MOBILE_EDITOR_QUERY).matches
   );
   const [mobileNativeEditMemoId, setMobileNativeEditMemoId] = useState<string | null>(null);
+  const standaloneOpenMemoIdRef = useRef<string | null>(null);
   const readOnly = props.isTrashView || Boolean(props.memo?.isDeleted);
   const mobileDefaultEditRequested = Boolean(
     props.memo?.id && props.memo.id === props.mobileDefaultEditMemoId && !readOnly
@@ -955,9 +984,43 @@ export const EditorPane = (props: EditorPaneProps) => {
 
   useEffect(() => {
     if (isMobileViewport && mobileDefaultEditRequested && props.memo?.id) {
+      if (consumeStandaloneMobileEditorReturn(props.memo.id)) {
+        props.onMobileDefaultEditConsumed();
+        setMobileNativeEditMemoId(null);
+        props.onBackToList();
+        return;
+      }
+
+      if (standaloneOpenMemoIdRef.current === props.memo.id) {
+        return;
+      }
+
+      standaloneOpenMemoIdRef.current = props.memo.id;
+      props.onMobileDefaultEditConsumed();
       openStandaloneMobileEditor(props.memo.id);
     }
-  }, [isMobileViewport, mobileDefaultEditRequested, props.memo?.id]);
+  }, [isMobileViewport, mobileDefaultEditRequested, props.memo?.id, props.onBackToList, props.onMobileDefaultEditConsumed]);
+
+  useEffect(() => {
+    const clearReturnedStandaloneEditor = () => {
+      if (!consumeStandaloneMobileEditorReturn(props.memo?.id ?? null)) {
+        return;
+      }
+
+      props.onMobileDefaultEditConsumed();
+      setMobileNativeEditMemoId(null);
+      props.onBackToList();
+    };
+
+    clearReturnedStandaloneEditor();
+    window.addEventListener("pageshow", clearReturnedStandaloneEditor);
+    document.addEventListener("visibilitychange", clearReturnedStandaloneEditor);
+
+    return () => {
+      window.removeEventListener("pageshow", clearReturnedStandaloneEditor);
+      document.removeEventListener("visibilitychange", clearReturnedStandaloneEditor);
+    };
+  }, [props.memo?.id, props.onBackToList, props.onMobileDefaultEditConsumed]);
 
   useEffect(() => {
     const mediaQuery = window.matchMedia(MOBILE_EDITOR_QUERY);
@@ -1053,6 +1116,7 @@ const RichEditorPane = ({
   const useMobilePlainTextEditor = isMobileViewport && mobileEditingActive && !readOnly;
 
   const memoRef = useRef<MemoDetail | null>(memo);
+  const editSessionRef = useRef<MemoEditSession | null>(null);
   const editorRef = useRef<Editor | null>(null);
   const mobileTextAreaRef = useRef<MobilePlainTextElement | null>(null);
   const mobileDraftTimerRef = useRef<number | null>(null);
@@ -1064,6 +1128,7 @@ const RichEditorPane = ({
   const noteSearchInputRef = useRef<HTMLInputElement | null>(null);
   const noteReplaceInputRef = useRef<HTMLInputElement | null>(null);
   const hydratingRef = useRef(false);
+  const hydratedMemoIdRef = useRef<string | null>(null);
   const hasUnsavedChangesRef = useRef(false);
   const editingMemoIdRef = useRef<string | null>(memo?.id ?? null);
   const imageCompressionEnabledRef = useRef(imageCompressionEnabled);
@@ -1242,7 +1307,8 @@ const RichEditorPane = ({
 
   const editor = useEditor({
     extensions: [
-      StarterKit,
+      StarterKit.configure({ codeBlock: false }),
+      CodeBlockLowlight.configure({ lowlight: codeBlockLowlight, defaultLanguage: "plaintext" }),
       ResizableImage.configure({
         allowBase64: false,
         inline: false,
@@ -1486,7 +1552,12 @@ const RichEditorPane = ({
 
   const markDirty = useCallback(() => {
     const currentMemo = memoRef.current;
-    if (hydratingRef.current || currentMemo?.isDeleted) {
+    if (
+      hydratingRef.current ||
+      currentMemo?.isDeleted ||
+      !currentMemo ||
+      hydratedMemoIdRef.current !== currentMemo.id
+    ) {
       return;
     }
 
@@ -1528,6 +1599,8 @@ const RichEditorPane = ({
 
     if (!memo) {
       memoRef.current = null;
+      editSessionRef.current = null;
+      hydratedMemoIdRef.current = null;
       editingMemoIdRef.current = null;
       hasUnsavedChangesRef.current = false;
       setHasUnsavedChanges(false);
@@ -1545,16 +1618,21 @@ const RichEditorPane = ({
     const sameMemo = editingMemoIdRef.current === memo.id;
     memoRef.current = memo;
 
+    if (!sameMemo) {
+      hydratedMemoIdRef.current = null;
+    }
+
     if (sameMemo && hasUnsavedChangesRef.current && !memo.isDeleted) {
       return;
     }
 
     void (async () => {
-      const [draft, queuedUpdate] = memo.isDeleted
-        ? [null, null]
+      const [draft, queuedUpdate, editSessionResponse] = memo.isDeleted
+        ? [null, null, null]
         : await Promise.all([
             localDb.drafts.get(memo.id),
             localDb.syncQueue.get(getMemoUpdateQueueId(memo.id)),
+            api.createMemoEditSession(memo.id),
           ]);
 
       if (cancelled) {
@@ -1594,6 +1672,9 @@ const RichEditorPane = ({
           }
         }
       }
+
+      hydratedMemoIdRef.current = memo.id;
+      editSessionRef.current = editSessionResponse?.editSession ?? null;
 
       window.setTimeout(() => {
         hydratingRef.current = false;
@@ -1678,8 +1759,9 @@ const RichEditorPane = ({
     mutationFn: async () => {
       const currentMemo = memoRef.current;
       const contentJson = getCurrentContentJson();
+      const editSession = editSessionRef.current;
 
-      if (!currentMemo || !contentJson) {
+      if (!currentMemo || !contentJson || !editSession || hydratedMemoIdRef.current !== currentMemo.id) {
         throw new Error("No memo selected");
       }
 
@@ -1695,6 +1777,8 @@ const RichEditorPane = ({
       const payload: MemoUpdateSyncPayload = {
         memoId: currentMemo.id,
         expectedRevision: currentMemo.revision,
+        expectedContentHash: currentMemo.contentHash,
+        editSessionId: editSession.id,
         title,
         contentJson,
         tags: parseTagsText(tagsText),
@@ -1704,6 +1788,8 @@ const RichEditorPane = ({
       try {
         data = await api.updateMemo(currentMemo.id, {
           expectedRevision: payload.expectedRevision,
+          expectedContentHash: payload.expectedContentHash,
+          editSessionId: payload.editSessionId,
           title: payload.title,
           contentJson: payload.contentJson,
           tags: payload.tags,
@@ -1717,6 +1803,14 @@ const RichEditorPane = ({
     onMutate: () => setSaveState("saving"),
     onSuccess: async ({ memo: savedMemo, snapshot }) => {
       memoRef.current = savedMemo;
+      const currentEditSession = editSessionRef.current;
+      if (currentEditSession) {
+        editSessionRef.current = {
+          ...currentEditSession,
+          baseRevision: savedMemo.revision,
+          baseContentHash: savedMemo.contentHash,
+        };
+      }
 
       if (useMobilePlainTextEditor && isEditorReady(editorRef.current)) {
         hydratingRef.current = true;
@@ -2248,13 +2342,14 @@ const RichEditorPane = ({
                 <Type className="h-4 w-4" />
               </Button>
             )}
-            <Button className="hidden sm:inline-flex" size="icon" variant="ghost" title="搜索当前笔记" aria-label="搜索当前笔记" onClick={() => openNoteSearch()}>
-              <Search className="h-4 w-4" />
+            <Button className="hidden h-8 w-8 text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-950 focus-visible:ring-2 focus-visible:ring-slate-300 sm:inline-flex" size="icon" variant="ghost" title="搜索当前笔记" aria-label="搜索当前笔记" onClick={() => openNoteSearch()}>
+              <Search className="h-5 w-5" strokeWidth={2.25} />
             </Button>
-            <Button className="hidden sm:inline-flex" size="icon" variant="ghost" title="版本历史" aria-label="版本历史" onClick={() => setHistoryOpen(true)}>
-              <History className="h-4 w-4" />
+            <Button className="hidden h-8 w-8 text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-950 focus-visible:ring-2 focus-visible:ring-slate-300 sm:inline-flex" size="icon" variant="ghost" title="版本历史" aria-label="版本历史" onClick={() => setHistoryOpen(true)}>
+              <History className="h-5 w-5" strokeWidth={2.25} />
             </Button>
-            <GitHubRepositoryLink className="hidden h-8 w-8 justify-center rounded-md text-slate-500 transition hover:bg-slate-50 hover:text-slate-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/70 lg:inline-flex" />
+            <GitHubRepositoryLink className="hidden h-8 w-8 justify-center rounded-md text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-950 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/70 lg:inline-flex" iconClassName="h-5 w-5" />
+            <ThemeToggle />
             {!readOnly && (
               <Button
                 className="hidden sm:inline-flex"

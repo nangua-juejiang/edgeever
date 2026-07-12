@@ -3,6 +3,7 @@ import Dexie, { type Table } from "dexie";
 
 export type LocalDraft = {
   memoId: string;
+  expectedRevision?: number;
   title: string;
   contentJson: TiptapDoc;
   tagsText: string;
@@ -12,6 +13,8 @@ export type LocalDraft = {
 export type MemoUpdateSyncPayload = {
   memoId: string;
   expectedRevision: number;
+  expectedContentHash: string;
+  editSessionId: string;
   title: string;
   contentJson: TiptapDoc;
   tags: string[];

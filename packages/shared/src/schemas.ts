@@ -22,6 +22,8 @@ export const MemoCreateSchema = z.object({
 
 export const MemoUpdateSchema = z.object({
   expectedRevision: z.number().int().min(0).optional(),
+  expectedContentHash: z.string().length(64).optional(),
+  editSessionId: z.string().trim().min(1).optional(),
   notebookId: z.string().trim().min(1).optional(),
   title: z.string().trim().max(160).optional(),
   isPinned: z.boolean().optional(),
@@ -30,6 +32,7 @@ export const MemoUpdateSchema = z.object({
   tags: z.array(z.string()).optional(),
   createdAt: z.string().datetime().optional(),
   updatedAt: z.string().datetime().optional(),
+  allowDestructiveOverwrite: z.boolean().optional(),
 });
 
 export const MoveMemosSchema = z.object({
@@ -53,6 +56,17 @@ export const LoginSchema = z.object({
   password: z.string().min(1).max(512),
 });
 
+export const ChangePasswordSchema = z
+  .object({
+    currentPassword: z.string().min(1).max(512),
+    newPassword: z.string().min(8).max(512),
+    confirmPassword: z.string().min(8).max(512),
+  })
+  .refine((input) => input.newPassword === input.confirmPassword, {
+    message: "New passwords do not match.",
+    path: ["confirmPassword"],
+  });
+
 export const ApiTokenCreateSchema = z.object({
   name: z.string().trim().min(1).max(80),
   scopes: z.array(z.string().trim().min(1).max(80)).min(1).max(32),
@@ -71,5 +85,6 @@ export type MoveMemosInput = z.infer<typeof MoveMemosSchema>;
 export type DeleteMemosInput = z.infer<typeof DeleteMemosSchema>;
 export type MergeMemosInput = z.infer<typeof MergeMemosSchema>;
 export type LoginInput = z.infer<typeof LoginSchema>;
+export type ChangePasswordInput = z.infer<typeof ChangePasswordSchema>;
 export type ApiTokenCreateInput = z.infer<typeof ApiTokenCreateSchema>;
 export type TagRenameInput = z.infer<typeof TagRenameSchema>;

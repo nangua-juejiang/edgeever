@@ -3,6 +3,7 @@ import type {
   ApiToken,
   CreatedApiToken,
   MemoDetail,
+  MemoEditSession,
   MemoRevision,
   MemoSummary,
   Notebook,
@@ -102,6 +103,12 @@ export const api = {
 
   login: (payload: { username: string; password: string }) =>
     request<AuthSession>("/api/v1/auth/login", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+
+  changePassword: (payload: { currentPassword: string; newPassword: string; confirmPassword: string }) =>
+    request<{ ok: true }>("/api/v1/auth/change-password", {
       method: "POST",
       body: JSON.stringify(payload),
     }),
@@ -233,6 +240,12 @@ export const api = {
     return request<MemoResponse>(`/api/v1/memos/${memoId}${suffix}`);
   },
 
+  createMemoEditSession: (memoId: string) =>
+    request<{ editSession: MemoEditSession }>(`/api/v1/memos/${memoId}/edit-sessions`, {
+      method: "POST",
+      body: JSON.stringify({}),
+    }),
+
   listMemoRevisions: (memoId: string) =>
     request<ListMemoRevisionsResponse>(`/api/v1/memos/${memoId}/revisions`),
 
@@ -258,12 +271,15 @@ export const api = {
     memoId: string,
     payload: {
       expectedRevision?: number;
+      expectedContentHash?: string;
+      editSessionId?: string;
       notebookId?: string;
       title?: string;
       isPinned?: boolean;
       contentJson?: TiptapDoc;
       contentMarkdown?: string;
       tags?: string[];
+      allowDestructiveOverwrite?: boolean;
     }
   ) =>
     request<MemoResponse>(`/api/v1/memos/${memoId}`, {

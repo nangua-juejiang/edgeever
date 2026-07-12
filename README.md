@@ -27,6 +27,8 @@ The public demo resets daily and restores sample notes. Do not store private con
 
 Copy this prompt into your AI coding assistant, such as Claude Code, Codex, Antigravity, Cursor, or Trae:
 
+**Recommendation:** Before deployment, configure GitHub and Cloudflare MCP servers, plugins, or other supported integrations for your AI Agent. This allows it to fork the repository, create the required Cloudflare resources, and deploy the application.
+
 ```text
 Please fork the EdgeEver repository first: https://github.com/tianma-if/edgeever
 
@@ -39,14 +41,16 @@ Agents should follow [AI Agent Cloudflare Deployment](docs/agent-deploy-cloudfla
 
 ### Manual Deployment
 
-Please refer to the [Cloudflare Manual Deployment Guide](docs/manual-deploy.en-US.md) for step-by-step instructions on manual installation and updating.
+Please refer to the [Cloudflare Manual Deployment Guide](docs/manual-deploy.md) for step-by-step instructions on manual installation and updating.
+
+The automated helper commands are recommended. If you create the Cloudflare resources manually, finish configuring `.env.local`—including the D1 ID, R2 bucket, password hash, and the 400-day session limit—before running `bun run deploy`.
 
 
 ## Features
 
 - Serverless, 100% free, and zero maintenance: Built on Cloudflare's Serverless architecture, running entirely within free tiers. Store up to 150k notes and 50k images without any hosting fees.
 - Open data: notes are stored in Cloudflare D1, based on standard SQLite, and can be read through REST API, MCP, and CLI.
-- AI Agent friendly: built-in MCP support lets tools such as Codex, Claude Code, and Antigravity read and organize notes with authorization.
+- AI Agent friendly: built-in MCP support lets tools such as Codex, Claude Code, and Antigravity read, organize, and maintain notes, while enabling integrations with Notion databases and Feishu Bitable.
 - Uncapped multi-device sync: self-hosted API means no restrictive commercial limits on the number of active login devices, supporting seamless synchronization across PC, tablet, and mobile (via PWA or browser).
 - Three-pane layout: notebook tree, note list, and main editor.
 - Unlimited nested notebooks.
@@ -61,6 +65,14 @@ Please refer to the [Cloudflare Manual Deployment Guide](docs/manual-deploy.en-U
 ## PWA Installation
 
 EdgeEver can be installed as a PWA on desktop or mobile home screens. On desktop, open the site in Chrome or Edge and use the install icon in the address bar. On Android, open it in Chrome, use the three-dot menu, and choose **Add to Home screen** or **Install**. Avoid installing from embedded browsers such as WeChat.
+
+> Common pitfall: When installing the PWA on mobile, Chrome or Edge is recommended. Other mobile browsers may encounter compatibility issues or unexpected errors during installation.
+
+## Native Clients
+
+Native clients are part of the EdgeEver roadmap. The mobile app is planned to be built with React Native, and the desktop app is planned to be built with Tauri.
+
+The goal is to let users connect these clients to their own self-hosted EdgeEver instance, keeping the same Cloudflare-based backend, open API, and user-owned data model while providing a smoother native experience on mobile and desktop.
 
 ## Tech Stack
 
@@ -102,7 +114,9 @@ bun run build
 ```text
 apps/web          Vite + React frontend, PWA, offline drafts, and sync queue
 apps/api          Cloudflare Worker + Hono API, OpenAPI, MCP endpoint
+apps/mobile       Expo + React Native mobile app
 apps/site         Astro official website, deployable independently
+packages/client   Shared API client for web and mobile apps
 packages/shared   Shared types, Zod schemas, TipTap / Markdown conversion
 scripts           Wrangler wrapper, password hash, CLI, MCP stdio bridge, Evernote ENEX import
 migrations        D1 database migrations
@@ -134,6 +148,8 @@ Repository file: [docs/openapi.json](docs/openapi.json).
 
 Create an API token in **Profile** -> **MCP settings**, then copy either the token or full MCP configuration into your AI Agent so it can install the MCP server and read or organize notes with permission.
 
+With MCP, EdgeEver can also connect to tools such as Notion databases and Feishu Bitable, turning scattered ideas, information, and materials from everyday notes into structured data that is easier to organize, search, and manage.
+
 ## Image Compression
 
 Image compression happens in the Web client before upload and is controlled by the **Compress note images** setting. When enabled, PNG, JPEG, WebP, and AVIF files are converted to WebP when beneficial, with the longest edge limited to `2560px`. If compression does not reduce size, the original file is kept.
@@ -151,4 +167,3 @@ If you want to migrate notes from other platforms to EdgeEver, please refer to t
 ## Community and Feedback
 
 - Bugs, feature requests, and deployment issues: [GitHub Issues](https://github.com/tianma-if/edgeever/issues)
-- WeChat: `m1245207870` (please mention EdgeEver)

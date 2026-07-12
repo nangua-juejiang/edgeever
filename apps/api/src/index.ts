@@ -5,9 +5,12 @@ import {
   docToText,
   emptyDoc,
   ApiTokenCreateSchema,
+  ChangePasswordSchema,
   DeleteMemosSchema,
   LoginSchema,
   markdownToDoc,
+  isSuspiciousMemoOverwrite,
+  isMemoEditBindingValid,
   MemoCreateSchema,
   MemoUpdateSchema,
   MergeMemosSchema,
@@ -19,8 +22,10 @@ import {
   type ApiToken,
   type CreatedApiToken,
   type MemoDetail,
+  type MemoEditSession,
   type MemoRevision,
   type MemoSummary,
+  type MemoUpdateInput,
   type Notebook,
   type NotebookCreateInput,
   type Resource,
@@ -127,6 +132,16 @@ type MemoRevisionRow = {
   content_hash: string;
   created_by: string;
   created_at: string;
+};
+
+type MemoEditSessionRow = {
+  id: string;
+  memo_id: string;
+  actor_type: "user" | "agent";
+  actor_id: string | null;
+  base_revision: number;
+  base_content_hash: string;
+  expires_at: string;
 };
 
 type UserRow = {
@@ -423,6 +438,7 @@ app.post("/api/v1/auth/login", zValidator("json", LoginSchema), async (c) => {
   return c.json({
     authRequired: true,
     authenticated: true,
+    sessionToken: session.token,
     user: {
       id: user.id,
       username: user.username,
@@ -431,8 +447,47 @@ app.post("/api/v1/auth/login", zValidator("json", LoginSchema), async (c) => {
   });
 });
 
+app.post("/api/v1/auth/change-password", zValidator("json", ChangePasswordSchema), async (c) => {
+  const auth = await authenticateSession(c, true);
+
+  if (!auth || auth.kind !== "user" || !auth.actorId || !auth.sessionId) {
+    return unauthorized(c, "An interactive user session is required.");
+  }
+
+  const input = c.req.valid("json");
+  const user = await c.env.DB.prepare(
+    `SELECT id, username, password_hash, display_name, is_disabled
+     FROM users
+     WHERE id = ? AND is_disabled = 0`
+  )
+    .bind(auth.actorId)
+    .first<UserRow>();
+
+  if (!user || !(await verifyPassword(input.currentPassword, user.password_hash))) {
+    return apiError(c, "invalid_current_password", "Current password is incorrect.", 400);
+  }
+
+  const now = isoNow();
+  const passwordHash = await hashPassword(input.newPassword);
+
+  await c.env.DB.batch([
+    c.env.DB.prepare(`UPDATE users SET password_hash = ?, updated_at = ? WHERE id = ?`).bind(
+      passwordHash,
+      now,
+      user.id
+    ),
+    c.env.DB.prepare(
+      `UPDATE sessions SET revoked_at = ?
+       WHERE user_id = ? AND id != ? AND revoked_at IS NULL`
+    ).bind(now, user.id, auth.sessionId),
+    auditStatement(c.env.DB, "user", user.id, "auth.password_change", "user", user.id, {}),
+  ]);
+
+  return c.json({ ok: true });
+});
+
 app.post("/api/v1/auth/logout", async (c) => {
-  const token = getCookie(c, SESSION_COOKIE);
+  const token = getCookie(c, SESSION_COOKIE) ?? getBearerToken(c);
 
   if (token) {
     await revokeSession(c.env.DB, token);
@@ -1037,6 +1092,53 @@ app.get("/api/v1/memos/:id", async (c) => {
   return c.json({ memo });
 });
 
+app.post("/api/v1/memos/:id/edit-sessions", async (c) => {
+  const denied = requireScopes(c, "write:memos");
+
+  if (denied) {
+    return denied;
+  }
+
+  const memoId = c.req.param("id");
+  const current = await getMemoDetailRow(c.env.DB, memoId);
+
+  if (!current) {
+    return notFound(c, "Memo not found");
+  }
+
+  const actor = getAuditActor(c);
+  const now = isoNow();
+  const session: MemoEditSession = {
+    id: createId("edit"),
+    memoId,
+    baseRevision: current.revision,
+    baseContentHash: current.content_hash,
+    expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60_000).toISOString(),
+  };
+
+  await c.env.DB.batch([
+    c.env.DB.prepare(`DELETE FROM memo_edit_sessions WHERE expires_at <= ?`).bind(now),
+    c.env.DB.prepare(
+      `INSERT INTO memo_edit_sessions (
+         id, memo_id, actor_type, actor_id, base_revision, base_content_hash,
+         expires_at, created_at, updated_at
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ).bind(
+      session.id,
+      memoId,
+      actor.actorType,
+      actor.actorId,
+      session.baseRevision,
+      session.baseContentHash,
+      session.expiresAt,
+      now,
+      now
+    ),
+  ]);
+
+  return c.json({ editSession: session });
+});
+
 app.get("/api/v1/memos/:id/revisions", async (c) => {
   const denied = requireScopes(c, "read:memos");
 
@@ -1455,8 +1557,20 @@ app.patch("/api/v1/memos/:id", zValidator("json", MemoUpdateSchema), async (c) =
     return denied;
   }
 
-  const id = c.req.param("id");
-  const input = c.req.valid("json");
+  return updateMemoFromInput(c, c.req.param("id"), c.req.valid("json"));
+});
+
+app.post("/api/v1/memos/:id/save", zValidator("json", MemoUpdateSchema), async (c) => {
+  const denied = requireScopes(c, "write:memos");
+
+  if (denied) {
+    return denied;
+  }
+
+  return updateMemoFromInput(c, c.req.param("id"), c.req.valid("json"));
+});
+
+const updateMemoFromInput = async (c: AppContext, id: string, input: MemoUpdateInput) => {
   const actor = getAuditActor(c);
   const actorLabel = getActorLabel(c);
   const current = await getMemoDetailRow(c.env.DB, id);
@@ -1479,6 +1593,57 @@ app.patch("/api/v1/memos/:id", zValidator("json", MemoUpdateSchema), async (c) =
       },
       409
     );
+  }
+
+  const hasDocumentUpdate = input.contentJson !== undefined || input.contentMarkdown !== undefined;
+  let editSession: MemoEditSessionRow | null = null;
+
+  if (hasDocumentUpdate) {
+    if (!input.editSessionId || !input.expectedContentHash || input.expectedRevision === undefined) {
+      return c.json(
+        { error: { code: "edit_session_required", message: "A bound edit session is required to save note content." } },
+        428
+      );
+    }
+
+    if (input.expectedContentHash !== current.content_hash) {
+      return c.json(
+        { error: { code: "content_conflict", message: "Note content changed after this edit session started." } },
+        409
+      );
+    }
+
+    editSession = await c.env.DB.prepare(
+      `SELECT id, memo_id, actor_type, actor_id, base_revision, base_content_hash, expires_at
+       FROM memo_edit_sessions
+       WHERE id = ? AND memo_id = ? AND actor_type = ? AND actor_id IS ? AND expires_at > ?`
+    )
+      .bind(input.editSessionId, id, actor.actorType, actor.actorId, isoNow())
+      .first<MemoEditSessionRow>();
+
+    if (
+      !editSession ||
+      !isMemoEditBindingValid(
+        { memoId: id, revision: current.revision, contentHash: current.content_hash },
+        {
+          id: editSession.id,
+          memoId: editSession.memo_id,
+          baseRevision: editSession.base_revision,
+          baseContentHash: editSession.base_content_hash,
+        },
+        {
+          editSessionId: input.editSessionId,
+          memoId: id,
+          expectedRevision: input.expectedRevision,
+          expectedContentHash: input.expectedContentHash,
+        }
+      )
+    ) {
+      return c.json(
+        { error: { code: "edit_session_conflict", message: "The edit session is stale or belongs to another note." } },
+        409
+      );
+    }
   }
 
   const isPinned = input.isPinned ?? Boolean(current.is_pinned);
@@ -1521,6 +1686,20 @@ app.patch("/api/v1/memos/:id", zValidator("json", MemoUpdateSchema), async (c) =
   const contentText = docToText(contentJson);
   const title =
     input.title !== undefined ? normalizeMemoTitle(input.title) : normalizeMemoTitle(current.title);
+  if (
+    !input.allowDestructiveOverwrite &&
+    isSuspiciousMemoOverwrite(current.title, current.content_text, title, contentText)
+  ) {
+    return c.json(
+      {
+        error: {
+          code: "suspicious_memo_overwrite",
+          message: "Save blocked because the title changed while most of the note content disappeared.",
+        },
+      },
+      409
+    );
+  }
   const tags = input.tags === undefined ? parseJsonArray(current.tags_json) : normalizeTags(input.tags);
   const excerpt = createExcerpt(contentText);
   const notebookId = input.notebookId ?? current.notebook_id;
@@ -1529,6 +1708,32 @@ app.patch("/api/v1/memos/:id", zValidator("json", MemoUpdateSchema), async (c) =
   const revisionStatements = (await shouldSnapshotMemoRevision(c.env.DB, current, title, JSON.stringify(tags), contentHash, updatedAt))
     ? [createMemoRevisionStatement(c.env.DB, current, actorLabel, updatedAt)]
     : [];
+  const editSessionStatements = editSession
+    ? [
+        c.env.DB.prepare(
+          `UPDATE memo_edit_sessions
+           SET base_revision = ?, base_content_hash = ?, updated_at = ?
+           WHERE id = ? AND memo_id = ? AND base_revision = ? AND base_content_hash = ?`
+        ).bind(nextRevision, contentHash, updatedAt, editSession.id, id, current.revision, current.content_hash),
+      ]
+    : [
+        c.env.DB.prepare(
+          `UPDATE memo_edit_sessions
+           SET base_revision = ?, base_content_hash = ?, updated_at = ?
+           WHERE memo_id = ? AND actor_type = ? AND actor_id IS ?
+             AND base_revision = ? AND base_content_hash = ? AND expires_at > ?`
+        ).bind(
+          nextRevision,
+          contentHash,
+          updatedAt,
+          id,
+          actor.actorType,
+          actor.actorId,
+          current.revision,
+          current.content_hash,
+          updatedAt
+        ),
+      ];
 
   await c.env.DB.batch([
     ...revisionStatements,
@@ -1548,13 +1753,14 @@ app.patch("/api/v1/memos/:id", zValidator("json", MemoUpdateSchema), async (c) =
       `INSERT INTO memos_fts (memo_id, title, content_text, tags)
        VALUES (?, ?, ?, ?)`
     ).bind(id, title, contentText, tags.join(" ")),
+    ...editSessionStatements,
     auditStatement(c.env.DB, actor.actorType, actor.actorId, "memo.update", "memo", id, {
       revision: nextRevision,
     }),
   ]);
 
   return c.json({ memo: await getMemoDetail(c.env.DB, id) });
-});
+};
 
 app.delete("/api/v1/memos/:id", async (c) => {
   const denied = requireScopes(c, "write:memos");
@@ -2773,6 +2979,12 @@ const authenticateBearerToken = async (c: AppContext, touch: boolean): Promise<A
     return null;
   }
 
+  const sessionAuth = await authenticateSessionToken(c, token, touch);
+
+  if (sessionAuth) {
+    return sessionAuth;
+  }
+
   const row = await c.env.DB.prepare(
     `SELECT id, name, token_value, scopes_json, last_used_at, expires_at, is_revoked, created_at
      FROM api_tokens
@@ -2802,13 +3014,7 @@ const authenticateBearerToken = async (c: AppContext, touch: boolean): Promise<A
   };
 };
 
-const authenticateSession = async (c: AppContext, touch: boolean): Promise<AuthContext | null> => {
-  const token = getCookie(c, SESSION_COOKIE);
-
-  if (!token) {
-    return null;
-  }
-
+const authenticateSessionToken = async (c: AppContext, token: string, touch: boolean): Promise<AuthContext | null> => {
   const row = await c.env.DB.prepare(
     `SELECT s.id, s.user_id, u.username, u.display_name, s.expires_at
      FROM sessions s
@@ -2838,6 +3044,16 @@ const authenticateSession = async (c: AppContext, touch: boolean): Promise<AuthC
     scopes: [],
     sessionId: row.id,
   };
+};
+
+const authenticateSession = async (c: AppContext, touch: boolean): Promise<AuthContext | null> => {
+  const token = getCookie(c, SESSION_COOKIE);
+
+  if (!token) {
+    return null;
+  }
+
+  return authenticateSessionToken(c, token, touch);
 };
 
 const getBearerToken = (c: AppContext) => {
@@ -3073,6 +3289,7 @@ const mapMemoDetail = (row: MemoDetailRow): MemoDetail => ({
   contentJson: parseDoc(row.content_json),
   contentMarkdown: row.content_markdown,
   contentText: row.content_text,
+  contentHash: row.content_hash,
   sourceMemoIds: parseJsonArray(row.source_memo_ids),
   mergeSourceCount: row.merge_source_count,
   mergedIntoMemoId: row.merged_into_memo_id,
@@ -4420,6 +4637,7 @@ const updateMemoRecord = async (
     tags?: string[];
     createdAt?: string;
     updatedAt?: string;
+    allowDestructiveOverwrite?: boolean;
   },
   actor: { actorType: "user" | "agent"; actorId: string | null },
   actorLabel: string
@@ -4489,6 +4707,15 @@ const updateMemoRecord = async (
   const contentText = docToText(contentJson);
   const title =
     input.title !== undefined ? normalizeMemoTitle(input.title) : normalizeMemoTitle(current.title);
+  if (
+    !input.allowDestructiveOverwrite &&
+    isSuspiciousMemoOverwrite(current.title, current.content_text, title, contentText)
+  ) {
+    return {
+      error: "suspicious_memo_overwrite",
+      message: "Save blocked because the title changed while most of the note content disappeared.",
+    };
+  }
   const tags = input.tags === undefined ? parseJsonArray(current.tags_json) : normalizeTags(input.tags);
   const excerpt = createExcerpt(contentText);
   const notebookId = input.notebookId ?? current.notebook_id;
