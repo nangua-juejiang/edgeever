@@ -31,7 +31,7 @@ bun run deploy:builds:setup
 EDGE_EVER_BUILDS_API_TOKEN=<token>
 ```
 
-不要提交或分享该 token。如果现有 `CLOUDFLARE_API_TOKEN` 已是具备相同权限的 User API Token，命令可以直接复用。
+不要提交或分享该 token。
 
 ![Cloudflare User API Token 权限（脱敏界面图）](assets/cloudflare-workers-builds-user-token.svg)
 

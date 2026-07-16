@@ -31,7 +31,7 @@ Do not use an Account API Token or a prebuilt template. Limit the token to the r
 EDGE_EVER_BUILDS_API_TOKEN=<token>
 ```
 
-Never commit or share this token. If `CLOUDFLARE_API_TOKEN` is already a User API Token with the same permissions, the command can reuse it.
+Never commit or share this token.
 
 ![Redacted Cloudflare User API Token permissions](assets/cloudflare-workers-builds-user-token.svg)
 

@@ -61,6 +61,7 @@ const gitRepository = () => {
   return { owner: match[1], repository: match[2] };
 };
 
+// Keep the generic token as a silent fallback for existing installations and CI.
 const cfToken = value("EDGE_EVER_BUILDS_API_TOKEN") || value("CLOUDFLARE_API_TOKEN");
 const accountId = value("CLOUDFLARE_ACCOUNT_ID");
 const workerName = instanceValue("WORKER_NAME");
@@ -233,7 +234,7 @@ const setup = async () => {
   if (!workerName) throw new Error("Missing EDGE_EVER_WORKER_NAME.");
   if (!cfToken) {
     throw new Error(
-      "Missing EDGE_EVER_BUILDS_API_TOKEN (or CLOUDFLARE_API_TOKEN). It must be a user-scoped token with Workers Builds Configuration: Edit and Workers Scripts: Read.",
+      "Missing EDGE_EVER_BUILDS_API_TOKEN. It must be a User API Token with Workers Builds Configuration: Edit and Workers Scripts: Read.",
     );
   }
 
