@@ -51,7 +51,7 @@ import { deleteCookie, getCookie, setCookie } from "hono/cookie";
 import { cors } from "hono/cors";
 import openApiSpec from "../../../docs/openapi.json";
 import { hasBootstrapCredential, verifyBootstrapPassword } from "./auth-bootstrap";
-import { isDemoModeEnabled, resolveDemoPasswordHash } from "./demo-mode";
+import { isDemoModeEnabled, resolveDemoPasswordHash, shouldUpsertDemoSeedRecord } from "./demo-mode";
 
 type Bindings = {
   DB: D1Database;
@@ -4971,13 +4971,41 @@ const ensureLocalDemoSeed = (env: Bindings) => {
   return localDemoSeedPromise;
 };
 
-const ensureDemoSeed = async (env: Bindings, options: { refreshResources?: boolean } = {}) => {
+const ensureDemoSeed = async (
+  env: Bindings,
+  options: { overwriteExisting?: boolean; refreshResources?: boolean } = {},
+) => {
   const db = env.DB;
   const now = isoNow();
   const statements: D1PreparedStatement[] = [];
   const bucketName = env.EDGE_EVER_R2_BUCKET_NAME?.trim() || DEFAULT_R2_BUCKET_NAME;
+  const overwriteExisting = options.overwriteExisting === true;
+  const existingNotebookIds = overwriteExisting
+    ? new Set<string>()
+    : new Set(
+        (
+          await db
+            .prepare(`SELECT id FROM notebooks WHERE id IN (${DEMO_SEED_NOTEBOOK_IDS.map(() => "?").join(", ")})`)
+            .bind(...DEMO_SEED_NOTEBOOK_IDS)
+            .all<{ id: string }>()
+        ).results.map((notebook) => notebook.id),
+      );
+  const existingMemoIds = overwriteExisting
+    ? new Set<string>()
+    : new Set(
+        (
+          await db
+            .prepare(`SELECT id FROM memos WHERE id IN (${DEMO_SEED_MEMO_IDS.map(() => "?").join(", ")})`)
+            .bind(...DEMO_SEED_MEMO_IDS)
+            .all<{ id: string }>()
+        ).results.map((memo) => memo.id),
+      );
 
   for (const notebook of DEMO_SEED_NOTEBOOKS) {
+    if (!shouldUpsertDemoSeedRecord(existingNotebookIds, notebook.id, overwriteExisting)) {
+      continue;
+    }
+
     statements.push(
       db
         .prepare(
@@ -5010,6 +5038,10 @@ const ensureDemoSeed = async (env: Bindings, options: { refreshResources?: boole
   }
 
   for (const memo of DEMO_SEED_MEMOS) {
+    if (!shouldUpsertDemoSeedRecord(existingMemoIds, memo.id, overwriteExisting)) {
+      continue;
+    }
+
     const contentJson = markdownToDoc(memo.markdown);
     const contentText = docToText(contentJson);
     const contentHash = await sha256(memo.markdown + JSON.stringify(contentJson));
@@ -5067,7 +5099,7 @@ const ensureDemoSeed = async (env: Bindings, options: { refreshResources?: boole
     );
   }
 
-  const existingResourceIds = options.refreshResources
+  const existingResourceIds = options.refreshResources || overwriteExisting
     ? new Set<string>()
     : new Set(
         (
@@ -5079,6 +5111,10 @@ const ensureDemoSeed = async (env: Bindings, options: { refreshResources?: boole
       );
 
   for (const resource of DEMO_SEED_RESOURCES) {
+    if (!shouldUpsertDemoSeedRecord(existingResourceIds, resource.id, overwriteExisting)) {
+      continue;
+    }
+
     const bytes = new TextEncoder().encode(resource.svg);
     const objectKey = `demo/${resource.memoId}/${resource.id}.svg`;
 
@@ -5138,7 +5174,9 @@ const ensureDemoSeed = async (env: Bindings, options: { refreshResources?: boole
     );
   }
 
-  await db.batch(statements);
+  if (statements.length > 0) {
+    await db.batch(statements);
+  }
 };
 
 const resetDemoData = async (env: Bindings, scheduledTime: number) => {
@@ -5185,7 +5223,7 @@ const resetDemoData = async (env: Bindings, scheduledTime: number) => {
 
   await db.batch(resetStatements);
 
-  await ensureDemoSeed(env, { refreshResources: true });
+  await ensureDemoSeed(env, { overwriteExisting: true, refreshResources: true });
   await audit(db, "system", null, "demo.reset", "demo", "edgeever-demo", {
     scheduledTime: new Date(scheduledTime).toISOString(),
     seedMemoCount: DEMO_SEED_MEMOS.length,
